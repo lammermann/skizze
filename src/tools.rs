@@ -114,10 +114,7 @@ impl Tool for BoxTool {
 
         let r = Rect::from_corners(src, dst);
 
-        buf.draw_line(r.top_left(), r.top_right());
-        buf.draw_line(r.top_right(), r.bottom_right());
-        buf.draw_line(r.bottom_right(), r.bottom_left());
-        buf.draw_line(r.bottom_left(), r.top_left());
+        buf.draw_box(r.top_left(), r.bottom_right());
     });
 }
 

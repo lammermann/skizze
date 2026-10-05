@@ -1,4 +1,4 @@
-use skizze::{Buffer, Document, Point};
+use skizze::{Buffer, Document, PathMode, Point};
 
 #[test]
 fn library_buffer_draws_and_renders_without_an_application_runtime() {
@@ -103,6 +103,27 @@ fn document_tracks_save_state_and_history() {
     assert_eq!(document.buffer().render(""), "z\n");
     assert!(document.undo());
     assert_eq!(document.buffer().render(""), "ab\n");
+}
+
+#[test]
+fn library_buffer_draws_boxes() {
+    let mut buffer = Buffer::default();
+    buffer.draw_box(Point::new(0, 0), Point::new(2, 1));
+    buffer.commit();
+    assert_eq!(buffer.render(""), "+-+\n+-+\n");
+}
+
+#[test]
+fn library_buffer_draws_connectors_by_path_mode() {
+    let mut line = Buffer::default();
+    line.draw_connector(Point::new(0, 0), Point::new(2, 1), PathMode::Snap90, false);
+    line.commit();
+    assert_eq!(line.render(""), "+\n+-+\n");
+
+    let mut arrow = Buffer::default();
+    arrow.draw_connector(Point::new(0, 0), Point::new(2, 0), PathMode::Snap45, true);
+    arrow.commit();
+    assert_eq!(arrow.render(""), "+->\n");
 }
 
 #[test]

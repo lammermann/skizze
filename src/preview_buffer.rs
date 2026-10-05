@@ -160,6 +160,11 @@ impl PreviewBuffer {
         self.preview_library(|buffer| buffer.draw_arrow_tip(point(src), point(dst)));
     }
 
+    /// Draw a rectangular box using pure library geometry.
+    pub(crate) fn draw_box(&mut self, top_left: Vec2, bottom_right: Vec2) {
+        self.preview_library(|buffer| buffer.draw_box(point(top_left), point(bottom_right)));
+    }
+
     /// Draw a line or arrow connector using pure library routing behavior.
     pub(crate) fn draw_connector(&mut self, src: Vec2, dst: Vec2, mode: PathMode, arrow: bool) {
         self.preview_library(|buffer| buffer.draw_connector(point(src), point(dst), mode, arrow));

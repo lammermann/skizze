@@ -10,6 +10,14 @@ pub enum PathMode {
 }
 
 impl Buffer {
+    /// Draw a rectangular box between opposite corners.
+    pub fn draw_box(&mut self, top_left: Point, bottom_right: Point) {
+        self.draw_line(top_left, Point::new(bottom_right.x, top_left.y));
+        self.draw_line(Point::new(bottom_right.x, top_left.y), bottom_right);
+        self.draw_line(bottom_right, Point::new(top_left.x, bottom_right.y));
+        self.draw_line(Point::new(top_left.x, bottom_right.y), top_left);
+    }
+
     /// Draw a connector using the selected routing mode.
     pub fn draw_connector(&mut self, src: Point, dst: Point, mode: PathMode, arrow: bool) {
         if mode == PathMode::Routed {
