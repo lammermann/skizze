@@ -17,21 +17,14 @@ pub(crate) struct Cell {
 }
 
 impl Cell {
+    #[cfg(test)]
     pub(crate) fn pos(&self) -> Vec2 {
         self.pos
     }
 
+    #[cfg(test)]
     pub(crate) fn c(&self) -> char {
         self.c
-    }
-
-    pub(crate) fn is_whitespace(&self) -> bool {
-        self.c.is_whitespace()
-    }
-
-    pub(crate) fn translate(mut self, by: XY<isize>) -> Self {
-        self.pos = self.pos.saturating_add(by);
-        self
     }
 }
 
@@ -59,6 +52,7 @@ fn vec2(position: LibraryPoint) -> Vec2 {
     Vec2::new(position.x, position.y)
 }
 
+#[cfg(test)]
 fn precedence(c: char) -> usize {
     match c {
         '+' => 5,
@@ -87,6 +81,7 @@ impl PreviewBuffer {
     }
 
     /// Add a pending edit, respecting connector overlap precedence unless forced.
+    #[cfg(test)]
     pub(crate) fn setv(&mut self, force: bool, pos: Vec2, c: char) {
         if force {
             self.edits.push(Cell { pos, c });
@@ -103,6 +98,7 @@ impl PreviewBuffer {
     }
 
     /// Add a pending edit at the given coordinates.
+    #[cfg(test)]
     pub(crate) fn set(&mut self, force: bool, x: usize, y: usize, c: char) {
         self.setv(force, Vec2::new(x, y), c);
     }
@@ -139,6 +135,7 @@ impl PreviewBuffer {
     }
 
     /// Get a committed cell, ignoring pending preview edits.
+    #[cfg(test)]
     pub(crate) fn getv(&self, pos: Vec2) -> Option<char> {
         self.chars.get(point(pos))
     }
@@ -150,14 +147,6 @@ impl PreviewBuffer {
             pos: vec2(position),
             c,
         }));
-    }
-
-    pub(crate) fn draw_line(&mut self, src: Vec2, dst: Vec2) {
-        self.preview_library(|buffer| buffer.draw_line(point(src), point(dst)));
-    }
-
-    pub(crate) fn draw_arrow_tip(&mut self, src: Vec2, dst: Vec2) {
-        self.preview_library(|buffer| buffer.draw_arrow_tip(point(src), point(dst)));
     }
 
     /// Place text lines using the library buffer, as pending preview edits.
@@ -183,24 +172,6 @@ impl PreviewBuffer {
     /// Draw a line or arrow connector using pure library routing behavior.
     pub(crate) fn draw_connector(&mut self, src: Vec2, dst: Vec2, mode: PathMode, arrow: bool) {
         self.preview_library(|buffer| buffer.draw_connector(point(src), point(dst), mode, arrow));
-    }
-
-    pub(crate) fn snap45(&self, src: Vec2, dst: Vec2) -> Vec2 {
-        vec2(self.chars.snap45(point(src), point(dst)))
-    }
-
-    pub(crate) fn snap90(&self, src: Vec2, dst: Vec2) -> Vec2 {
-        vec2(self.chars.snap90(point(src), point(dst)))
-    }
-
-    pub(crate) fn draw_path(&mut self, src: Vec2, dst: Vec2) -> Vec2 {
-        let mut path = self.chars.clone();
-        let last = path.draw_path(point(src), point(dst));
-        self.edits.extend(path.pending_cells().map(|(position, c)| Cell {
-            pos: vec2(position),
-            c,
-        }));
-        vec2(last)
     }
 
     /// Render visible committed cells, pending edits, and cursor state for a viewport.

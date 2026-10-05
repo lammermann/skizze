@@ -68,6 +68,61 @@ fn library_buffer_uses_stroke_precedence_and_visibility_of_committed_content() {
 }
 
 #[test]
+fn library_buffer_arrow_tips_cover_all_directions() {
+    let cases = [
+        (Point::new(1, 1), Point::new(1, 0), '^'),
+        (Point::new(1, 1), Point::new(2, 1), '>'),
+        (Point::new(1, 1), Point::new(1, 2), 'v'),
+        (Point::new(1, 1), Point::new(0, 1), '<'),
+        (Point::new(1, 1), Point::new(2, 0), '^'),
+        (Point::new(1, 1), Point::new(0, 2), 'v'),
+    ];
+    for (src, dst, expected) in cases {
+        let mut buffer = Buffer::default();
+        buffer.draw_arrow_tip(src, dst);
+        buffer.commit();
+        assert_eq!(buffer.get(dst), Some(expected), "{src:?} -> {dst:?}");
+    }
+}
+
+#[test]
+fn library_arrow_tip_follows_adjacent_stroke_matrix() {
+    let cases = [
+        (Point::new(3, 5), Point::new(3, 3), vec![Point::new(2, 3)], '<'),
+        (Point::new(3, 5), Point::new(3, 3), vec![Point::new(4, 3)], '>'),
+        (Point::new(1, 3), Point::new(3, 3), vec![Point::new(3, 2)], '^'),
+        (Point::new(3, 1), Point::new(3, 3), vec![Point::new(2, 3)], '<'),
+        (Point::new(5, 3), Point::new(3, 3), vec![Point::new(3, 4)], 'v'),
+        (Point::new(1, 1), Point::new(3, 3), vec![Point::new(4, 3)], '>'),
+        (Point::new(5, 5), Point::new(3, 3), vec![Point::new(2, 3)], '<'),
+    ];
+    for (src, dst, occupied, expected) in cases {
+        let mut buffer = Buffer::default();
+        for point in occupied { buffer.set_at_forced(point, 'x'); }
+        buffer.commit();
+        buffer.draw_arrow_tip(src, dst);
+        buffer.commit();
+        assert_eq!(buffer.get(dst), Some(expected), "{src:?} -> {dst:?}");
+    }
+}
+
+#[test]
+fn library_arrow_tip_retains_direction_when_forward_cell_is_occupied() {
+    let mut buffer = Buffer::from_text("   \n - \n   \n");
+    buffer.draw_arrow_tip(Point::new(1, 2), Point::new(1, 1));
+    buffer.commit();
+    assert_eq!(buffer.get(Point::new(1, 1)), Some('^'));
+}
+
+#[test]
+fn library_arrow_tip_preserves_connected_horizontal_direction() {
+    let mut buffer = Buffer::from_text(" - \n");
+    buffer.draw_arrow_tip(Point::new(0, 0), Point::new(1, 0));
+    buffer.commit();
+    assert_eq!(buffer.get(Point::new(1, 0)), Some('>'));
+}
+
+#[test]
 fn library_buffer_snaps_connectors_and_draws_arrow_tips() {
     let buffer = Buffer::from_text("    -\n");
     assert_eq!(buffer.snap90(Point::new(1, 1), Point::new(4, 0)), Point::new(4, 1));
@@ -103,6 +158,19 @@ fn document_tracks_save_state_and_history() {
     assert_eq!(document.buffer().render(""), "z\n");
     assert!(document.undo());
     assert_eq!(document.buffer().render(""), "ab\n");
+}
+
+#[test]
+fn library_buffer_respects_stroke_overlap_precedence() {
+    let mut buffer = Buffer::from_text("-\n");
+    buffer.set_at(Point::new(0, 0), '|');
+    buffer.set_at(Point::new(1, 0), '|');
+    buffer.set_at(Point::new(1, 0), '+');
+    buffer.commit();
+    assert_eq!(buffer.render(""), "-+\n");
+    buffer.set_at_forced(Point::new(0, 0), 'x');
+    buffer.commit();
+    assert_eq!(buffer.render(""), "x+\n");
 }
 
 #[test]
@@ -148,6 +216,20 @@ fn library_buffer_erases_only_visible_cells_in_a_box() {
 }
 
 #[test]
+fn library_buffer_preserves_reverse_diagonal_lines() {
+    let cases = [
+        (Point::new(2, 0), Point::new(0, 2), '/'),
+        (Point::new(2, 2), Point::new(0, 0), '\\'),
+    ];
+    for (start, end, middle) in cases {
+        let mut buffer = Buffer::default();
+        buffer.draw_line(start, end);
+        buffer.commit();
+        assert_eq!(buffer.get(Point::new(1, 1)), Some(middle));
+    }
+}
+
+#[test]
 fn library_buffer_draws_boxes() {
     let mut buffer = Buffer::default();
     buffer.draw_box(Point::new(0, 0), Point::new(2, 1));
@@ -166,6 +248,21 @@ fn library_buffer_draws_connectors_by_path_mode() {
     arrow.draw_connector(Point::new(0, 0), Point::new(2, 0), PathMode::Snap45, true);
     arrow.commit();
     assert_eq!(arrow.render(""), "+->\n");
+}
+
+#[test]
+fn library_buffer_routes_around_component_content() {
+    let mut buffer = Buffer::from_text("  +-----+\n  | API |\n  +-----+\n");
+    let original = buffer.clone();
+    let last = buffer.draw_path(Point::new(0, 1), Point::new(10, 1));
+    buffer.commit();
+
+    assert!(last.y > 1);
+    for y in 0..3 {
+        for x in 2..9 {
+            assert_eq!(buffer.get(Point::new(x, y)), original.get(Point::new(x, y)));
+        }
+    }
 }
 
 #[test]

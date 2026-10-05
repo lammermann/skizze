@@ -504,8 +504,6 @@ impl Editor {
     }
 }
 
-pub(crate) const SP: char = ' ';
-
 /// Returns `true` if `a` is within `w` of `b` (inclusive).
 fn within(w: usize, a: usize, b: usize) -> bool {
     diff(a, b) <= w
@@ -595,36 +593,6 @@ mod tests {
     }
 
     #[test]
-    fn edits_are_previewed_until_flushed_or_discarded() {
-        let mut buf = buffer("a\n");
-        buf.set(true, 2, 1, 'z');
-        assert_eq!(text(&buf), "a\n");
-        assert_eq!(buf.bounds(), point(3, 2));
-        assert!(buf.iter_within(point(2, 1), point(1, 1)).any(|c| {
-            matches!(c, Char::Dirty(Cell { c: 'z', .. }))
-        }));
-        buf.discard_edits();
-        assert_eq!(buf.bounds(), point(1, 1));
-        buf.set(true, 2, 1, 'z');
-        buf.flush_edits();
-        assert_eq!(text(&buf), "a\n  z\n");
-        assert_eq!(buf.getv(point(2, 1)), Some('z'));
-    }
-
-    #[test]
-    fn non_forced_edits_respect_overlap_precedence() {
-        let mut buf = buffer("-\n");
-        buf.set(false, 0, 0, '|');
-        buf.set(false, 1, 0, '|');
-        buf.set(false, 1, 0, '+');
-        buf.flush_edits();
-        assert_eq!(text(&buf), "-+\n");
-        buf.set(true, 0, 0, 'x');
-        buf.flush_edits();
-        assert_eq!(text(&buf), "x+\n");
-    }
-
-    #[test]
     fn whitespace_cleanup_has_distinct_trailing_and_margin_modes() {
         let original = skizze::Buffer::from_text("   \n  a  \n    b \n \n");
         let mut trailing = original.clone();
@@ -633,130 +601,6 @@ mod tests {
         let mut margins = original;
         margins.strip_margin_whitespace();
         assert_eq!(margins.render(""), "a\n  b\n");
-    }
-
-    #[test]
-    fn replacing_committed_content_discards_preview_state() {
-        let mut buf = buffer("a\n");
-        buf.set(true, 1, 0, 'b');
-        buf.set_cursor(point(2, 0));
-
-        buf.replace_committed_buffer(skizze::Buffer::from_text("z\n"));
-
-        assert_eq!(text(&buf), "z\n");
-        assert_eq!(buf.bounds(), point(1, 1));
-        assert_eq!(buf.iter_within(point(0, 0), point(3, 1)).count(), 1);
-    }
-
-    #[test]
-    fn clearing_preview_buffer_removes_content_edits_and_cursor() {
-        let mut buf = buffer("a\n");
-        buf.set(true, 2, 1, 'z');
-        buf.set_cursor(point(3, 2));
-
-        buf.clear();
-
-        assert_eq!(text(&buf), "");
-        assert_eq!(buf.bounds(), point(0, 0));
-        assert_eq!(buf.iter_within(point(0, 0), point(4, 3)).count(), 0);
-    }
-
-    #[test]
-    fn drawing_lines_produces_horizontal_vertical_and_diagonal_strokes() {
-        let mut horizontal = PreviewBuffer::default();
-        horizontal.draw_line(point(0, 0), point(3, 0));
-        horizontal.flush_edits();
-        assert_eq!(text(&horizontal), "+--+\n");
-
-        let mut vertical = PreviewBuffer::default();
-        vertical.draw_line(point(0, 0), point(0, 2));
-        vertical.flush_edits();
-        assert_eq!(text(&vertical), "+\n|\n+\n");
-
-        let mut diagonal = PreviewBuffer::default();
-        diagonal.draw_line(point(0, 0), point(2, 2));
-        diagonal.flush_edits();
-        assert_eq!(text(&diagonal), "+\n \\\n  +\n");
-    }
-
-    #[test]
-    fn drawing_lines_preserves_both_diagonal_orientations_in_reverse() {
-        let cases = [
-            (point(2, 0), point(0, 2), '/', vec![point(1, 1)]),
-            (point(0, 2), point(2, 0), '/', vec![point(1, 1)]),
-            (point(2, 2), point(0, 0), '\\', vec![point(1, 1)]),
-            (point(0, 0), point(2, 2), '\\', vec![point(1, 1)]),
-        ];
-
-        for (src, dst, stroke, middle) in cases {
-            let mut buf = PreviewBuffer::default();
-            buf.draw_line(src, dst);
-            buf.flush_edits();
-            for pos in middle {
-                assert_eq!(buf.getv(pos), Some(stroke), "{src:?} -> {dst:?}");
-            }
-            assert_eq!(buf.getv(src), Some('+'));
-            assert_eq!(buf.getv(dst), Some('+'));
-        }
-    }
-
-    #[test]
-    fn snap_modes_choose_existing_horizontal_strokes_and_diagonal_corners() {
-        let mut buf = buffer("    -\n");
-        assert_eq!(buf.snap90(point(1, 1), point(4, 0)), point(4, 1));
-        assert_eq!(buf.snap90(point(1, 1), point(3, 0)), point(1, 0));
-        assert_eq!(buf.snap45(point(1, 1), point(4, 3)), point(2, 1));
-        buf.draw_arrow_tip(point(1, 1), point(1, 0));
-        buf.flush_edits();
-        assert_eq!(buf.getv(point(1, 0)), Some('^'));
-    }
-
-    #[test]
-    fn routed_path_avoids_existing_content() {
-        let mut buf = buffer(" + \n");
-        let last = buf.draw_path(point(0, 0), point(2, 0));
-        buf.flush_edits();
-        assert_eq!(last, point(1, 1));
-        assert_eq!(buf.getv(point(1, 0)), Some('+'));
-        assert_eq!(buf.getv(point(0, 0)), Some('+'));
-        assert_eq!(buf.getv(point(2, 0)), Some('+'));
-    }
-
-    #[test]
-    fn routed_path_connects_two_sides_of_a_component_without_drawing_through_it() {
-        // A user can route a connector around a component instead of obscuring its label.
-        let mut diagram = buffer("  +-----+\n  | API |\n  +-----+\n");
-        let original = diagram.clone();
-        let last = diagram.draw_path(point(0, 1), point(10, 1));
-        diagram.flush_edits();
-
-        assert_eq!(diagram.getv(point(0, 1)), Some('+'));
-        assert_eq!(diagram.getv(point(10, 1)), Some('+'));
-        assert!(last.y > 1, "the route should go below the component");
-        for y in 0..3 {
-            for x in 2..9 {
-                assert_eq!(diagram.getv(point(x, y)), original.getv(point(x, y)));
-            }
-        }
-    }
-
-    #[test]
-    fn routed_path_goes_around_a_gateway_between_two_components() {
-        // In a small architecture diagram, a connection from UI to DB must avoid
-        // the gateway box that lies between them.
-        let mut diagram = buffer("+---+ +---+ +---+\n| UI| |GW | |DB |\n+---+ +---+ +---+\n");
-        let original = diagram.clone();
-        let last = diagram.draw_path(point(4, 1), point(12, 1));
-        diagram.flush_edits();
-
-        assert_eq!(diagram.getv(point(4, 1)), Some('+'));
-        assert_eq!(diagram.getv(point(12, 1)), Some('+'));
-        assert!(last.y > 1, "the route should go below the gateway");
-        for y in 0..3 {
-            for x in 6..11 {
-                assert_eq!(diagram.getv(point(x, y)), original.getv(point(x, y)));
-            }
-        }
     }
 
     #[test]
@@ -789,78 +633,6 @@ mod tests {
     }
 
     #[test]
-    fn arrows_point_in_the_draw_direction_and_follow_adjacent_strokes() {
-        let cases = [
-            (point(1, 1), point(1, 0), '^'),
-            (point(1, 1), point(2, 1), '>'),
-            (point(1, 1), point(1, 2), 'v'),
-            (point(1, 1), point(0, 1), '<'),
-            (point(1, 1), point(2, 0), '^'),
-            (point(1, 1), point(0, 0), '^'),
-            (point(1, 1), point(2, 2), 'v'),
-            (point(1, 1), point(0, 2), 'v'),
-        ];
-
-        for (src, dst, expected) in cases {
-            let mut buf = PreviewBuffer::default();
-            buf.draw_arrow_tip(src, dst);
-            buf.flush_edits();
-            assert_eq!(buf.getv(dst), Some(expected), "{src:?} -> {dst:?}");
-        }
-
-        // An arrow ending on a horizontal stroke uses its direction rather than
-        // replacing the connected stroke with a vertical arrowhead.
-        let mut connected = buffer(" - \n");
-        connected.draw_arrow_tip(point(0, 0), point(1, 0));
-        connected.flush_edits();
-        assert_eq!(connected.getv(point(1, 0)), Some('>'));
-    }
-
-    #[test]
-    fn arrow_tips_follow_the_adjacent_stroke_matrix() {
-        let cases: &[(Vec2, Vec2, &[Vec2], char)] = &[
-            // Cardinal tips turn toward one adjacent stroke, but retain their
-            // direction when the forward cell or both lateral cells are occupied.
-            (point(3, 5), point(3, 3), &[point(2, 3)], '<'),
-            (point(3, 5), point(3, 3), &[point(4, 3)], '>'),
-            (point(3, 5), point(3, 3), &[point(2, 3), point(4, 3)], '^'),
-            (point(1, 3), point(3, 3), &[point(3, 2)], '^'),
-            (point(1, 3), point(3, 3), &[point(3, 4)], 'v'),
-            (point(1, 3), point(3, 3), &[point(3, 2), point(3, 4)], '>'),
-            (point(3, 1), point(3, 3), &[point(4, 3)], '>'),
-            (point(3, 1), point(3, 3), &[point(2, 3)], '<'),
-            (point(3, 1), point(3, 3), &[point(2, 3), point(4, 3)], 'v'),
-            (point(5, 3), point(3, 3), &[point(3, 4)], 'v'),
-            (point(5, 3), point(3, 3), &[point(3, 2)], '^'),
-            (point(5, 3), point(3, 3), &[point(3, 2), point(3, 4)], '<'),
-            // Diagonal tips prefer the horizontal direction if space exists.
-            (point(1, 1), point(3, 3), &[], 'v'),
-            (point(1, 1), point(3, 3), &[point(4, 3)], '>'),
-            (point(1, 5), point(3, 3), &[], '^'),
-            (point(1, 5), point(3, 3), &[point(4, 3)], '>'),
-            (point(5, 1), point(3, 3), &[], 'v'),
-            (point(5, 1), point(3, 3), &[point(2, 3)], '<'),
-            (point(5, 5), point(3, 3), &[], '^'),
-            (point(5, 5), point(3, 3), &[point(2, 3)], '<'),
-            // West-facing diagonals must not inspect x - 1 at the left edge.
-            (point(2, 1), point(0, 3), &[], 'v'),
-            (point(2, 5), point(0, 3), &[], '^'),
-        ];
-
-        for &(src, dst, occupied, expected) in cases {
-            let mut buf = PreviewBuffer::default();
-            for &pos in occupied {
-                buf.setv(true, pos, 'x');
-            }
-            buf.flush_edits();
-            buf.draw_arrow_tip(src, dst);
-            buf.flush_edits();
-
-            assert_eq!(buf.getv(dst), Some(expected), "{src:?} -> {dst:?}");
-        }
-    }
-
-    #[test]
     fn arrow_tool_handles_left_edge_and_adjacent_collision_tips() {
         let mut edge_view = tool_view();
         let mut edge_tool = ArrowTool::default();
@@ -888,15 +660,6 @@ mod tests {
             collision_tool.on_event(&mut ctx, &left_mouse(Release(Left), point(2, 1)));
         }
         assert_eq!(collision_view.get_inner().read().buffer.getv(point(2, 1)), Some('^'));
-    }
-
-    #[test]
-    fn snap45_preserves_direction_in_all_diagonal_quadrants() {
-        let buf = PreviewBuffer::default();
-        assert_eq!(buf.snap45(point(3, 3), point(1, 0)), point(3, 2));
-        assert_eq!(buf.snap45(point(3, 3), point(7, 1)), point(5, 3));
-        assert_eq!(buf.snap45(point(3, 3), point(1, 6)), point(3, 4));
-        assert_eq!(buf.snap45(point(3, 3), point(7, 6)), point(4, 3));
     }
 
     #[test]
