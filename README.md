@@ -1,52 +1,47 @@
 <p align="center">
   <!-- project logo --!>
-  <img src="askii.png" alt="logo"><br><br>
+  <img src="askii.png" alt="skizze logo"><br><br>
   <!-- crates.io version !-->
-  <a href="https://crates.io/crates/askii">
-    <img alt="Crates.io" src="https://img.shields.io/crates/v/askii?style=flat-square">
+  <a href="https://crates.io/crates/skizze">
+    <img alt="Crates.io" src="https://img.shields.io/crates/v/skizze?style=flat-square">
   </a>
   <!-- crates.io downloads --!>
-  <a href="https://crates.io/crates/askii">
-    <img alt="Crates.io" src="https://img.shields.io/crates/d/askii?style=flat-square">
+  <a href="https://crates.io/crates/skizze">
+    <img alt="Crates.io" src="https://img.shields.io/crates/d/skizze?style=flat-square">
   </a>
   <!-- github release downloads --!>
-  <a href="https://github.com/nytopop/askii/releases">
-    <img alt="GitHub All Releases" src="https://img.shields.io/github/downloads/nytopop/askii/total?style=flat-square">
+  <a href="https://github.com/lammermann/skizze/releases">
+    <img alt="GitHub All Releases" src="https://img.shields.io/github/downloads/lammermann/skizze/total?style=flat-square">
   </a>
   <!-- crates.io license --!>
   <a href="./LICENSE-APACHE">
-    <img alt="Apache-2.0 OR MIT" src="https://img.shields.io/crates/l/askii?style=flat-square">
+    <img alt="Apache-2.0 OR MIT" src="https://img.shields.io/crates/l/skizze?style=flat-square">
   </a>
   <br><br>
   <a href="https://asciinema.org/a/329963" target="_blank"><img src="https://asciinema.org/a/329963.svg" /></a>
 </p>
 
-TUI based ASCII diagram editor.
+# skizze
+
+A TUI-based ASCII diagram editor.
 
 # Installation
-Install a [binary release](https://github.com/nytopop/askii/releases), or use `cargo install askii` to compile the latest source release from [crates.io](https://crates.io/crates/askii).
+
+Install the latest source release from [crates.io](https://crates.io/crates/skizze):
+
+```
+cargo install skizze
+```
 
 # Compilation
-The binary links against a few X11 libs for clipboard functionality (on linux), so make sure they are available during compilation. On debian, they can be installed with:
+
+Build from a checkout with Cargo:
 
 ```
-apt install libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxau-dev libxdmcp-dev
+cargo build --release
 ```
 
-Use `cargo` to compile. Alternatively, the [`Makefile`](Makefile) can be used to build a binary and deb / rpm / pacman packages.
-
-```
-cd askii && make
-```
-
-The produced artifacts will be located in `askii/dist`.
-
-It requires:
-
-- [GNU Make](https://www.gnu.org/software/make/)
-- [jq](https://stedolan.github.io/jq/)
-- [fpm](https://github.com/jordansissel/fpm)
-- [libarchive](https://www.libarchive.org/)
+The resulting binary is located at `target/release/skizze`.
 
 # License
 Licensed under either of
@@ -58,3 +53,7 @@ at your option.
 
 ## Contribution
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+## Credits
+
+skizze is a fork of the excelent [askii](https://github.com/nytopop/askii) that is not maintained anymore, originally created by [nytopop](https://github.com/nytopop).

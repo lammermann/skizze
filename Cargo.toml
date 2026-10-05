@@ -1,12 +1,12 @@
 [package]
-name = "askii"
+name = "skizze"
 description = "TUI based ASCII diagram editor."
 version = "0.6.0"
 authors = ["nytopop <ericizoita@gmail.com>"]
 edition = "2018"
 license = "Apache-2.0 OR MIT"
-homepage = "https://github.com/nytopop/askii"
-repository = "https://github.com/nytopop/askii.git"
+homepage = "https://github.com/lammermann/skizze"
+repository = "https://github.com/lammermann/skizze.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -362,7 +362,7 @@ TOOLS:
     Move  Move existing content. Click and drag to select an area, then click and drag from inside the area to move its content. Clicking outside of the selected area resets the selection.";
 
 fn editor_help(siv: &mut Cursive) {
-    let version_str = format!("askii {}", env!("CARGO_PKG_VERSION"));
+    let version_str = format!("skizze {}", env!("CARGO_PKG_VERSION"));
 
     let authors = env!("CARGO_PKG_AUTHORS")
         .split(':')
