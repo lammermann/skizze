@@ -106,6 +106,14 @@ fn document_tracks_save_state_and_history() {
 }
 
 #[test]
+fn library_buffer_places_multiline_text() {
+    let mut buffer = Buffer::default();
+    buffer.place_text(Point::new(2, 1), &[vec!['h', 'i'], vec![' ', '!']]);
+    buffer.commit();
+    assert_eq!(buffer.render(""), "\n  hi\n   !\n");
+}
+
+#[test]
 fn library_buffer_erases_only_visible_cells_in_a_box() {
     let mut buffer = Buffer::from_text("ab\n c\n");
     buffer.erase_box(Point::new(0, 0), Point::new(0, 1));

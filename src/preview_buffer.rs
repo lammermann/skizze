@@ -160,6 +160,11 @@ impl PreviewBuffer {
         self.preview_library(|buffer| buffer.draw_arrow_tip(point(src), point(dst)));
     }
 
+    /// Place text lines using the library buffer, as pending preview edits.
+    pub(crate) fn place_text(&mut self, origin: Vec2, lines: &[Vec<char>]) {
+        self.preview_library(|buffer| buffer.place_text(point(origin), lines));
+    }
+
     /// Erase non-whitespace committed cells in an inclusive rectangle.
     pub(crate) fn erase_box(&mut self, first: Vec2, second: Vec2) {
         self.preview_library(|buffer| buffer.erase_box(point(first), point(second)));

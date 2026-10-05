@@ -10,6 +10,15 @@ pub enum PathMode {
 }
 
 impl Buffer {
+    /// Stage text lines at `origin`, preserving spaces and line offsets.
+    pub fn place_text(&mut self, origin: Point, lines: &[Vec<char>]) {
+        for (y, line) in lines.iter().enumerate() {
+            for (x, c) in line.iter().enumerate() {
+                self.set_at_forced(Point::new(origin.x + x, origin.y + y), *c);
+            }
+        }
+    }
+
     /// Stage spaces over non-whitespace cells in the inclusive rectangle.
     pub fn erase_box(&mut self, first: Point, second: Point) {
         let min_x = first.x.min(second.x);

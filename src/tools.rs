@@ -286,13 +286,7 @@ impl TextTool {
     fn render(&self, buf: &mut Buffer) {
         let src = option!(self.src);
 
-        for (y, line) in self.buffer.iter().enumerate() {
-            for (x, c) in line.iter().enumerate() {
-                let pos = Vec2::new(x, y) + src;
-                buf.setv(true, pos, *c);
-            }
-        }
-
+        buf.place_text(src, &self.buffer);
         buf.set_cursor(self.cursor + src);
     }
 
