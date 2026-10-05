@@ -1,7 +1,7 @@
 //! Cursive-specific preview state layered over the pure library buffer.
 
 use cursive::{Rect, Vec2, XY};
-use skizze::{Buffer as LibraryBuffer, Point as LibraryPoint};
+use skizze::{Buffer as LibraryBuffer, PathMode, Point as LibraryPoint};
 use std::{
     cmp::max,
     io::{self, BufReader, Read},
@@ -158,6 +158,11 @@ impl PreviewBuffer {
 
     pub(crate) fn draw_arrow_tip(&mut self, src: Vec2, dst: Vec2) {
         self.preview_library(|buffer| buffer.draw_arrow_tip(point(src), point(dst)));
+    }
+
+    /// Draw a line or arrow connector using pure library routing behavior.
+    pub(crate) fn draw_connector(&mut self, src: Vec2, dst: Vec2, mode: PathMode, arrow: bool) {
+        self.preview_library(|buffer| buffer.draw_connector(point(src), point(dst), mode, arrow));
     }
 
     pub(crate) fn snap45(&self, src: Vec2, dst: Vec2) -> Vec2 {

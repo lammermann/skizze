@@ -13,6 +13,8 @@ use cursive::{
 };
 use std::{cmp::min, fmt};
 
+pub(crate) use skizze::PathMode;
+
 macro_rules! option {
     ($a:expr) => {
         match $a {
@@ -119,19 +121,6 @@ impl Tool for BoxTool {
     });
 }
 
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum PathMode {
-    Snap90,
-    Snap45,
-    Routed,
-}
-
-impl Default for PathMode {
-    fn default() -> Self {
-        Self::Snap90
-    }
-}
-
 #[derive(Copy, Clone, Default)]
 pub(crate) struct LineTool {
     src: Option<Vec2>,
@@ -153,18 +142,7 @@ impl Tool for LineTool {
     fn_on_event_drag!(|t: &Self, buf: &mut Buffer| {
         let (src, dst) = option!(t.src, t.dst);
 
-        if let PathMode::Routed = t.path_mode {
-            buf.draw_path(src, dst);
-            return;
-        }
-
-        let mid = match t.path_mode {
-            PathMode::Snap90 => buf.snap90(src, dst),
-            _ => buf.snap45(src, dst),
-        };
-
-        buf.draw_line(src, mid);
-        buf.draw_line(mid, dst);
+        buf.draw_connector(src, dst, t.path_mode, false);
     });
 }
 
@@ -189,25 +167,7 @@ impl Tool for ArrowTool {
     fn_on_event_drag!(|t: &Self, buf: &mut Buffer| {
         let (src, dst) = option!(t.src, t.dst);
 
-        if let PathMode::Routed = t.path_mode {
-            let last = buf.draw_path(src, dst);
-            buf.draw_arrow_tip(last, dst);
-            return;
-        }
-
-        let mid = match t.path_mode {
-            PathMode::Snap90 => buf.snap90(src, dst),
-            _ => buf.snap45(src, dst),
-        };
-
-        if mid != dst {
-            buf.draw_line(src, mid);
-            buf.draw_line(mid, dst);
-            buf.draw_arrow_tip(mid, dst);
-        } else {
-            buf.draw_line(src, dst);
-            buf.draw_arrow_tip(src, dst);
-        }
+        buf.draw_connector(src, dst, t.path_mode, true);
     });
 }
 

@@ -4,6 +4,8 @@
 
 mod buffer;
 mod document;
+mod tool;
 
 pub use buffer::{Buffer, Point};
 pub use document::Document;
+pub use tool::PathMode;
