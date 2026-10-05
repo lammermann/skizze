@@ -5,7 +5,9 @@
 mod buffer;
 mod document;
 mod tool;
+mod text;
 
 pub use buffer::{Buffer, Point};
 pub use document::Document;
 pub use tool::PathMode;
+pub use text::TextEdit;

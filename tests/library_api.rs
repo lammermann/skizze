@@ -1,4 +1,4 @@
-use skizze::{Buffer, Document, PathMode, Point};
+use skizze::{Buffer, Document, PathMode, Point, TextEdit};
 
 #[test]
 fn library_buffer_draws_and_renders_without_an_application_runtime() {
@@ -103,6 +103,24 @@ fn document_tracks_save_state_and_history() {
     assert_eq!(document.buffer().render(""), "z\n");
     assert!(document.undo());
     assert_eq!(document.buffer().render(""), "ab\n");
+}
+
+#[test]
+fn text_edit_handles_insertion_navigation_and_line_merging() {
+    let mut text = TextEdit::default();
+    text.begin();
+    text.insert('a');
+    text.insert('b');
+    text.left();
+    text.newline();
+    text.insert('x');
+    assert_eq!(text.lines(), &[vec!['a'], vec!['x', 'b']]);
+    assert_eq!(text.cursor(), Point::new(1, 1));
+
+    text.backspace();
+    text.backspace();
+    assert_eq!(text.lines(), &[vec!['a', 'b']]);
+    assert_eq!(text.cursor(), Point::new(1, 0));
 }
 
 #[test]

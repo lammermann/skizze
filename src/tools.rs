@@ -11,9 +11,10 @@ use cursive::{
     event::{Event, EventResult, Key, MouseButton::*, MouseEvent::*},
     Rect, Vec2,
 };
-use std::{cmp::min, fmt};
+use std::fmt;
 
 pub(crate) use skizze::PathMode;
+use skizze::TextEdit;
 
 macro_rules! option {
     ($a:expr) => {
@@ -172,8 +173,7 @@ impl Tool for ArrowTool {
 pub(crate) struct TextTool {
     src: Option<Vec2>,
     cursor_active: bool,
-    buffer: Vec<Vec<char>>,
-    cursor: Vec2,
+    text: TextEdit,
 }
 
 impl Default for TextTool {
@@ -181,8 +181,7 @@ impl Default for TextTool {
         Self {
             src: None,
             cursor_active: false,
-            buffer: vec![],
-            cursor: Vec2::new(0, 0),
+            text: TextEdit::default(),
         }
     }
 }
@@ -191,8 +190,6 @@ simple_display! { TextTool, "Text" }
 
 impl Tool for TextTool {
     fn on_event(&mut self, ctx: &mut EditorCtx<'_>, event: &Event) -> Option<EventResult> {
-        let Vec2 { x, y } = &mut self.cursor;
-
         match ctx.relativize(event) {
             Event::Mouse {
                 event: Press(Left),
@@ -202,9 +199,7 @@ impl Tool for TextTool {
                 if !self.cursor_active {
                     self.src = Some(position);
                     self.cursor_active = true;
-                    self.buffer.clear();
-                    self.buffer.push(vec![]);
-                    self.cursor = Vec2::new(0, 0);
+                    self.text.begin();
                     ctx.preview(|buf| self.render(buf));
                 } else {
                     ctx.clobber(|buf| self.render(buf));
@@ -215,57 +210,43 @@ impl Tool for TextTool {
             _ if !self.cursor_active => return None,
 
             Event::Char(c) => {
-                self.buffer[*y].insert(*x, c);
-                *x += 1;
+                self.text.insert(c);
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Up) => {
-                *y = y.saturating_sub(1);
-                *x = min(self.buffer[*y].len(), *x);
+                self.text.up();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Down) => {
-                *y = min(self.buffer.len() - 1, *y + 1);
-                *x = min(self.buffer[*y].len(), *x);
+                self.text.down();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Left) => {
-                *x = x.saturating_sub(1);
+                self.text.left();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Right) => {
-                *x = min(self.buffer[*y].len(), *x + 1);
+                self.text.right();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Enter) => {
-                let next = self.buffer[*y].split_off(*x);
-                self.buffer.insert(*y + 1, next);
-                *x = 0;
-                *y += 1;
+                self.text.newline();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
 
             Event::Key(Key::Backspace) | Event::Key(Key::Del) => {
-                if *x > 0 {
-                    self.buffer[*y].remove(*x - 1);
-                    *x -= 1;
-                } else if *y > 0 {
-                    let mut next = self.buffer.remove(*y);
-                    *y -= 1;
-                    *x = self.buffer[*y].len();
-                    self.buffer[*y].append(&mut next);
-                }
+                self.text.backspace();
                 ctx.preview(|buf| self.render(buf));
                 ctx.scroll_to_cursor();
             }
@@ -286,15 +267,15 @@ impl TextTool {
     fn render(&self, buf: &mut Buffer) {
         let src = option!(self.src);
 
-        buf.place_text(src, &self.buffer);
-        buf.set_cursor(self.cursor + src);
+        buf.place_text(src, self.text.lines());
+        let cursor = self.text.cursor();
+        buf.set_cursor(Vec2::new(cursor.x, cursor.y) + src);
     }
 
     fn reset(&mut self) {
         self.src = None;
         self.cursor_active = false;
-        self.buffer.clear();
-        self.cursor = Vec2::new(0, 0);
+        self.text.reset();
     }
 }
 
@@ -442,8 +423,11 @@ mod tests {
         let mut buf = Buffer::default();
         let mut tool = TextTool::default();
         tool.src = Some(Vec2::new(2, 1));
-        tool.buffer = vec![vec!['h', 'i'], vec!['!']];
-        tool.cursor = Vec2::new(1, 1);
+        tool.text.begin();
+        tool.text.insert('h');
+        tool.text.insert('i');
+        tool.text.newline();
+        tool.text.insert('!');
         tool.render(&mut buf);
         assert_eq!(buf.getv(Vec2::new(2, 1)), None);
         assert_eq!(preview_at(&buf, 2, 1), Some('h'));
@@ -451,7 +435,7 @@ mod tests {
         assert_eq!(preview_at(&buf, 2, 2), Some('!'));
         tool.reset();
         assert!(tool.src.is_none());
-        assert!(tool.buffer.is_empty());
+        assert!(tool.text.lines().is_empty());
     }
 
     #[test]
