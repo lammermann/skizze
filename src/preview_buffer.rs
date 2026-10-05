@@ -46,7 +46,7 @@ pub(crate) enum Char {
 /// Preview edits and cursor state used by the terminal UI.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct PreviewBuffer {
-    pub(crate) chars: LibraryBuffer,
+    chars: LibraryBuffer,
     pub(crate) edits: Vec<Cell>,
     pub(crate) cursor: Option<Vec2>,
 }
@@ -115,6 +115,18 @@ impl PreviewBuffer {
         self.chars.commit();
     }
 
+    /// Return the committed library buffer, excluding preview edits and cursor state.
+    pub(crate) fn committed_buffer(&self) -> &LibraryBuffer {
+        &self.chars
+    }
+
+    /// Replace committed content and discard transient preview state.
+    pub(crate) fn replace_committed_buffer(&mut self, buffer: LibraryBuffer) {
+        self.chars = buffer;
+        self.edits.clear();
+        self.cursor = None;
+    }
+
     /// Construct preview state from caller-supplied text bytes.
     pub(crate) fn read_from<R: Read>(r: R) -> io::Result<Self> {
         let mut text = String::new();
@@ -129,11 +141,6 @@ impl PreviewBuffer {
     /// Get a committed cell, ignoring pending preview edits.
     pub(crate) fn getv(&self, pos: Vec2) -> Option<char> {
         self.chars.get(point(pos))
-    }
-
-    /// Whether a committed cell is non-whitespace.
-    pub(crate) fn visible(&self, pos: Vec2) -> bool {
-        self.getv(pos).map(|c| !c.is_whitespace()).unwrap_or(false)
     }
 
     fn preview_library<F: FnOnce(&mut LibraryBuffer)>(&mut self, render: F) {
@@ -171,15 +178,6 @@ impl PreviewBuffer {
         vec2(last)
     }
 
-    /// Returns committed content without transient preview state.
-    pub(crate) fn snapshot(&self) -> Self {
-        Self {
-            chars: self.chars.clone(),
-            edits: vec![],
-            cursor: None,
-        }
-    }
-
     /// Render visible committed cells, pending edits, and cursor state for a viewport.
     pub(crate) fn iter_within<'a>(
         &'a self,
@@ -196,17 +194,8 @@ impl PreviewBuffer {
             .chain(self.cursor.map(|pos| Cell { pos, c: CURSOR }).map(Char::Cursor))
     }
 
-    /// Render committed content, with `prefix` before each line.
-    pub(crate) fn iter<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = char> + 'a {
-        self.chars.render(prefix).chars().collect::<Vec<_>>().into_iter()
-    }
-
     pub(crate) fn strip_margin_whitespace(&mut self) {
         self.chars.strip_margin_whitespace();
-    }
-
-    pub(crate) fn strip_trailing_whitespace(&mut self) {
-        self.chars.strip_trailing_whitespace();
     }
 
     /// Clears committed content, pending preview edits, and the cursor.

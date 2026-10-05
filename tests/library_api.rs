@@ -1,4 +1,4 @@
-use skizze::{Buffer, Point};
+use skizze::{Buffer, Document, Point};
 
 #[test]
 fn library_buffer_draws_and_renders_without_an_application_runtime() {
@@ -78,6 +78,31 @@ fn library_buffer_snaps_connectors_and_draws_arrow_tips() {
     arrow.draw_arrow_tip(Point::new(1, 1), Point::new(1, 0));
     arrow.commit();
     assert_eq!(arrow.get(Point::new(1, 0)), Some('^'));
+}
+
+#[test]
+fn document_tracks_save_state_and_history() {
+    let mut document = Document::from_text("a\n");
+    assert!(!document.is_dirty());
+    assert!(!document.undo());
+
+    document.edit(|buffer| buffer.set_at_forced(Point::new(1, 0), 'b'));
+    assert!(document.is_dirty());
+    assert_eq!(document.buffer().render(""), "ab\n");
+
+    assert!(document.undo());
+    assert_eq!(document.buffer().render(""), "a\n");
+    assert!(!document.is_dirty());
+    assert!(document.redo());
+    assert_eq!(document.buffer().render(""), "ab\n");
+
+    document.mark_saved();
+    assert!(!document.is_dirty());
+
+    document.replace_buffer(Buffer::from_text("z\n"));
+    assert_eq!(document.buffer().render(""), "z\n");
+    assert!(document.undo());
+    assert_eq!(document.buffer().render(""), "ab\n");
 }
 
 #[test]

@@ -12,14 +12,13 @@ use cursive::{
     Printer, Vec2,
 };
 use lazy_static::lazy_static;
-use skizze::Buffer as LibraryBuffer;
+use skizze::Document;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     cmp::{max, min},
     error::Error,
     fs::{self, File, OpenOptions},
-    io::{self, ErrorKind, Read, Write},
-    mem,
+    io::{self, ErrorKind, Write},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -297,10 +296,7 @@ impl EditorView {
 pub(crate) struct Editor {
     opts: Options,
     buffer: PreviewBuffer,
-    lsave: PreviewBuffer,
-    dirty: bool,
-    undo_history: Vec<PreviewBuffer>,
-    redo_history: Vec<PreviewBuffer>,
+    document: Document,
     active_tool: Option<Box<dyn Tool>>,
     canvas: Vec2,
     rendered: String,
@@ -324,10 +320,7 @@ impl Editor {
         let mut editor = Self {
             opts,
             buffer: PreviewBuffer::default(),
-            lsave: PreviewBuffer::default(),
-            dirty: false,
-            undo_history: vec![],
-            redo_history: vec![],
+            document: Document::default(),
             active_tool: Some(Box::new(tool)),
             canvas: Vec2::new(0, 0),
             rendered: String::default(),
@@ -350,7 +343,7 @@ impl Editor {
 
     /// Returns `true` if the buffer has been modified since the last save.
     pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
+        self.document.is_dirty()
     }
 
     /// Set the active tool.
@@ -375,10 +368,7 @@ impl Editor {
     pub(crate) fn clear(&mut self) {
         self.opts.file = None;
         self.buffer.clear();
-        self.lsave.clear();
-        self.dirty = false;
-        self.undo_history.clear();
-        self.redo_history.clear();
+        self.document = Document::default();
         self.canvas = Vec2::new(0, 0);
     }
 
@@ -400,7 +390,7 @@ impl Editor {
         self.clear();
         self.opts.file = Some(path.as_ref().into());
         if let Some(buf) = buffer {
-            self.lsave = buf.clone();
+            self.document = Document::from_buffer(buf.committed_buffer().clone());
             self.buffer = buf;
         }
 
@@ -425,8 +415,7 @@ impl Editor {
                 .open(path)?;
 
             self.render_to_file(file)?;
-            self.lsave = self.buffer.clone();
-            self.dirty = false;
+            self.document.mark_saved();
         }
 
         Ok(self.path().is_some())
@@ -445,18 +434,14 @@ impl Editor {
     fn render_to_file(&mut self, mut file: File) -> io::Result<()> {
         self.canvas = Vec2::new(0, 0);
 
-        self.with_snapshot(|ed| {
-            let mut buffer = LibraryBuffer::from_text(&ed.buffer.iter("").collect::<String>());
-            if ed.opts.strip_margin_ws {
-                buffer.strip_margin_whitespace();
-            } else if !ed.opts.keep_trailing_ws {
-                buffer.strip_trailing_whitespace();
-            }
-            ed.buffer = PreviewBuffer::read_from(buffer.render("").as_bytes()).expect("in-memory buffer rendering is valid UTF-8");
-        });
+        self.document
+            .replace_buffer(self.buffer.committed_buffer().clone());
+        self.document
+            .normalize_for_save(self.opts.strip_margin_ws, self.opts.keep_trailing_ws);
+        self.buffer
+            .replace_committed_buffer(self.document.buffer().clone());
 
-        self.rendered.clear();
-        self.rendered.extend(self.buffer.iter(""));
+        self.rendered = self.document.buffer().render("");
 
         file.write_all(self.rendered.as_bytes())?;
         file.flush()?;
@@ -471,17 +456,7 @@ impl Editor {
     pub(crate) fn render_to_clipboard(&self, prefix: &str) -> Result<(), Box<dyn Error>> {
         let mut ctx = ClipboardContext::new()?;
 
-        let mut buf = LibraryBuffer::from_text(&self.buffer.iter("").collect::<String>());
-        buf.strip_margin_whitespace();
-
-        let mut rendered = buf.render(prefix);
-        if let Some(c) = rendered.pop() {
-            if c != '\n' {
-                rendered.push(c);
-            }
-        }
-
-        ctx.set_contents(rendered)
+        ctx.set_contents(self.document.render_trimmed(prefix))
     }
 
     /// Trim all whitespace from margins.
@@ -498,34 +473,21 @@ impl Editor {
     /// Use this function to execute any buffer modification that should be saved in the
     /// undo history.
     fn with_snapshot<F: FnOnce(&mut Self)>(&mut self, apply: F) {
-        let snapshot = self.buffer.snapshot();
-        self.undo_history.push(snapshot);
         self.buffer.discard_edits();
-
         apply(self);
-
-        if self.undo_history.last().unwrap() == &self.buffer {
-            self.undo_history.pop();
-        } else {
-            self.dirty = true;
-        }
+        self.document
+            .replace_buffer(self.buffer.committed_buffer().clone());
     }
 
     /// Undo the last buffer modification.
     ///
     /// Returns `false` if there was nothing to undo.
     pub(crate) fn undo(&mut self) -> bool {
-        let undone = self
-            .undo_history
-            .pop()
-            .map(|buffer| mem::replace(&mut self.buffer, buffer))
-            .map(|buffer| self.redo_history.push(buffer))
-            .is_some();
-
+        let undone = self.document.undo();
         if undone {
-            self.dirty = self.buffer != self.lsave;
+            self.buffer
+                .replace_committed_buffer(self.document.buffer().clone());
         }
-
         undone
     }
 
@@ -533,17 +495,11 @@ impl Editor {
     ///
     /// Returns `false` if there was nothing to redo.
     pub(crate) fn redo(&mut self) -> bool {
-        let redone = self
-            .redo_history
-            .pop()
-            .map(|buffer| mem::replace(&mut self.buffer, buffer))
-            .map(|buffer| self.undo_history.push(buffer))
-            .is_some();
-
+        let redone = self.document.redo();
         if redone {
-            self.dirty = self.buffer != self.lsave;
+            self.buffer
+                .replace_committed_buffer(self.document.buffer().clone());
         }
-
         redone
     }
 }
@@ -575,7 +531,7 @@ mod tests {
     }
 
     fn text(buf: &PreviewBuffer) -> String {
-        buf.iter("").collect()
+        buf.committed_buffer().render("")
     }
 
     fn editor() -> Editor {
@@ -633,7 +589,7 @@ mod tests {
     fn reading_and_rendering_preserve_lines_and_prefixes() {
         let buf = buffer("  a\n\n b  \n");
         assert_eq!(text(&buf), "  a\n\n b  \n");
-        assert_eq!(buf.iter("# ").collect::<String>(), "#   a\n# \n#  b  \n");
+        assert_eq!(buf.committed_buffer().render("# "), "#   a\n# \n#  b  \n");
         assert_eq!(buf.getv(point(2, 0)), Some('a'));
         assert_eq!(buf.getv(point(0, 1)), None);
     }
@@ -670,13 +626,26 @@ mod tests {
 
     #[test]
     fn whitespace_cleanup_has_distinct_trailing_and_margin_modes() {
-        let original = buffer("   \n  a  \n    b \n \n");
+        let original = skizze::Buffer::from_text("   \n  a  \n    b \n \n");
         let mut trailing = original.clone();
         trailing.strip_trailing_whitespace();
-        assert_eq!(text(&trailing), "\n  a\n    b\n\n");
+        assert_eq!(trailing.render(""), "\n  a\n    b\n\n");
         let mut margins = original;
         margins.strip_margin_whitespace();
-        assert_eq!(text(&margins), "a\n  b\n");
+        assert_eq!(margins.render(""), "a\n  b\n");
+    }
+
+    #[test]
+    fn replacing_committed_content_discards_preview_state() {
+        let mut buf = buffer("a\n");
+        buf.set(true, 1, 0, 'b');
+        buf.set_cursor(point(2, 0));
+
+        buf.replace_committed_buffer(skizze::Buffer::from_text("z\n"));
+
+        assert_eq!(text(&buf), "z\n");
+        assert_eq!(buf.bounds(), point(1, 1));
+        assert_eq!(buf.iter_within(point(0, 0), point(3, 1)).count(), 1);
     }
 
     #[test]
