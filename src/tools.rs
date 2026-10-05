@@ -3,7 +3,8 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 use super::{
-    editor::{Buffer, Cell, Char, EditorCtx, CONSUMED, SP},
+    editor::{EditorCtx, CONSUMED, SP},
+    preview_buffer::{Cell, Char, PreviewBuffer as Buffer},
     Options,
 };
 use cursive::{

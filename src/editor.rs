@@ -2,23 +2,23 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use super::{tools::*, Options};
+use super::{preview_buffer::{Cell, Char, PreviewBuffer}, tools::*, Options};
 use clipboard::{ClipboardContext, ClipboardProvider};
 use cursive::{
     event::{Event, EventResult, MouseButton::*, MouseEvent::*},
     theme::ColorStyle,
     view::{scroll::Scroller, View},
     views::ScrollView,
-    Printer, Rect, Vec2, XY,
+    Printer, Vec2,
 };
 use lazy_static::lazy_static;
-use skizze::{Buffer as LibraryBuffer, Point as LibraryPoint};
+use skizze::Buffer as LibraryBuffer;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     cmp::{max, min},
     error::Error,
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, ErrorKind, Read, Write},
+    io::{self, ErrorKind, Read, Write},
     mem,
     path::{Path, PathBuf},
     rc::Rc,
@@ -223,7 +223,7 @@ impl<'a> EditorCtx<'a> {
 
     /// Modify the edit buffer using `render`, flushing any changes and saving a snapshot
     /// of the buffer's prior state in the editor's undo history.
-    pub(crate) fn clobber<R: FnOnce(&mut Buffer)>(&mut self, render: R) {
+    pub(crate) fn clobber<R: FnOnce(&mut PreviewBuffer)>(&mut self, render: R) {
         let mut editor = self.0.get_inner_mut().write();
 
         editor.with_snapshot(|ed| {
@@ -234,7 +234,7 @@ impl<'a> EditorCtx<'a> {
     }
 
     /// Modify the edit buffer using `render`, without flushing any changes.
-    pub(crate) fn preview<R: FnOnce(&mut Buffer)>(&mut self, render: R) {
+    pub(crate) fn preview<R: FnOnce(&mut PreviewBuffer)>(&mut self, render: R) {
         let mut editor = self.0.get_inner_mut().write();
         editor.buffer.discard_edits();
         render(&mut editor.buffer);
@@ -296,11 +296,11 @@ impl EditorView {
 
 pub(crate) struct Editor {
     opts: Options,
-    buffer: Buffer,
-    lsave: Buffer,
+    buffer: PreviewBuffer,
+    lsave: PreviewBuffer,
     dirty: bool,
-    undo_history: Vec<Buffer>,
-    redo_history: Vec<Buffer>,
+    undo_history: Vec<PreviewBuffer>,
+    redo_history: Vec<PreviewBuffer>,
     active_tool: Option<Box<dyn Tool>>,
     canvas: Vec2,
     rendered: String,
@@ -323,8 +323,8 @@ impl Editor {
 
         let mut editor = Self {
             opts,
-            buffer: Buffer::default(),
-            lsave: Buffer::default(),
+            buffer: PreviewBuffer::default(),
+            lsave: PreviewBuffer::default(),
             dirty: false,
             undo_history: vec![],
             redo_history: vec![],
@@ -390,7 +390,7 @@ impl Editor {
         let buffer = OpenOptions::new()
             .read(true)
             .open(path.as_ref())
-            .and_then(Buffer::read_from);
+            .and_then(PreviewBuffer::read_from);
 
         let buffer = match buffer {
             Err(e) if e.kind() == ErrorKind::NotFound => None,
@@ -452,7 +452,7 @@ impl Editor {
             } else if !ed.opts.keep_trailing_ws {
                 buffer.strip_trailing_whitespace();
             }
-            ed.buffer = Buffer::read_from(buffer.render("").as_bytes()).expect("in-memory buffer rendering is valid UTF-8");
+            ed.buffer = PreviewBuffer::read_from(buffer.render("").as_bytes()).expect("in-memory buffer rendering is valid UTF-8");
         });
 
         self.rendered.clear();
@@ -549,301 +549,6 @@ impl Editor {
 }
 
 pub(crate) const SP: char = ' ';
-pub(crate) const DASH: char = '-';
-pub(crate) const PIPE: char = '|';
-pub(crate) const DIAG: char = '/';
-pub(crate) const GAID: char = '\\';
-pub(crate) const PLUS: char = '+';
-pub(crate) const CURS: char = '_';
-
-#[derive(Clone, Default, PartialEq, Eq)]
-/// Cursive-specific preview and cursor state layered over the library buffer.
-pub(crate) struct PreviewBuffer {
-    chars: LibraryBuffer,
-    edits: Vec<Cell>,
-    cursor: Option<Vec2>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct Cell {
-    pos: Vec2,
-    c: char,
-}
-
-impl Cell {
-    pub(crate) fn pos(&self) -> Vec2 {
-        self.pos
-    }
-
-    pub(crate) fn c(&self) -> char {
-        self.c
-    }
-
-    pub(crate) fn is_whitespace(&self) -> bool {
-        self.c.is_whitespace()
-    }
-
-    pub(crate) fn translate(mut self, by: XY<isize>) -> Self {
-        self.pos = self.pos.saturating_add(by);
-        self
-    }
-}
-
-/// Compatibility name for the preview adapter while binary callers are migrated.
-pub(crate) type Buffer = PreviewBuffer;
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Char {
-    Clean(Cell),
-    Dirty(Cell),
-    Cursor(Cell),
-}
-
-impl PreviewBuffer {
-    fn read_from<R: Read>(r: R) -> io::Result<Self> {
-        let mut text = String::new();
-        BufReader::new(r).read_to_string(&mut text)?;
-        let parsed = LibraryBuffer::from_text(&text);
-
-        Ok(Self {
-            chars: parsed,
-            edits: vec![],
-            cursor: None,
-        })
-    }
-
-    /// Returns a copy of this buffer without any pending edits.
-    fn snapshot(&self) -> Self {
-        Self {
-            chars: self.chars.clone(),
-            edits: vec![],
-            cursor: None,
-        }
-    }
-
-    /// Set the cursor position to `pos`.
-    pub(crate) fn set_cursor(&mut self, pos: Vec2) {
-        self.cursor = Some(pos);
-    }
-
-    /// Disable the cursor.
-    fn drop_cursor(&mut self) {
-        self.cursor = None;
-    }
-
-    /// Clears all content in the buffer.
-    fn clear(&mut self) {
-        self.chars.clear();
-        self.edits.clear();
-        self.cursor = None;
-    }
-
-    /// Returns the viewport size required to display all content within the buffer.
-    fn bounds(&self) -> Vec2 {
-        let library_bounds = self.chars.bounds();
-        let mut bounds = Vec2 {
-            x: library_bounds.x,
-            y: library_bounds.y,
-        };
-
-        bounds.x = max(
-            bounds.x,
-            self.edits
-                .iter()
-                .map(|Cell { pos, .. }| pos.x + 1)
-                .max()
-                .unwrap_or(0),
-        );
-
-        bounds.y = max(
-            bounds.y,
-            self.edits
-                .iter()
-                .map(|Cell { pos, .. }| pos.y + 1)
-                .max()
-                .unwrap_or(0),
-        );
-
-        if let Some(Vec2 { x, y }) = self.cursor {
-            bounds.x = max(bounds.x, x + 1);
-            bounds.y = max(bounds.y, y + 1);
-        }
-
-        bounds
-    }
-
-    /// Returns an iterator over all characters within the viewport formed by `offset`
-    /// and `size`.
-    pub(crate) fn iter_within<'a>(
-        &'a self,
-        offset: Vec2,
-        size: Vec2,
-    ) -> impl Iterator<Item = Char> + 'a {
-        let area = Rect::from_corners(offset, offset + size);
-
-        self.chars
-            .committed_cells()
-            .filter(move |(point, _)| area.contains(Vec2::new(point.x, point.y)))
-            .map(|(point, c)| Cell {
-                pos: Vec2::new(point.x, point.y),
-                c,
-            })
-            .map(Char::Clean)
-            .chain(
-                self.edits
-                    .iter()
-                    .copied()
-                    .filter(move |Cell { pos, .. }| area.contains(*pos))
-                    .map(Char::Dirty),
-            )
-            .chain(
-                self.cursor
-                    .map(|pos| Cell { pos, c: CURS })
-                    .map(Char::Cursor),
-            )
-    }
-
-    /// Returns an iterator over all characters in the buffer, injecting newlines
-    /// where appropriate, with `prefix` before each line.
-    fn iter<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = char> + 'a {
-        self.chars
-            .render(prefix)
-            .chars()
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-
-    /// Strip margin whitespace from the buffer.
-    fn strip_margin_whitespace(&mut self) {
-        self.chars.strip_margin_whitespace();
-    }
-
-    /// Strip trailing whitespace from the buffer.
-    fn strip_trailing_whitespace(&mut self) {
-        self.chars.strip_trailing_whitespace();
-    }
-
-    /// Get the cell at `pos`, if it exists.
-    ///
-    /// Does not consider any pending edits.
-    pub(crate) fn getv(&self, pos: Vec2) -> Option<char> {
-        self.chars.get(LibraryPoint::new(pos.x, pos.y))
-    }
-
-    /// Returns `true` iff the cell at `pos` exists and contains a non-whitespace
-    /// character.
-    ///
-    /// Does not consider any pending edits.
-    pub(crate) fn visible(&self, pos: Vec2) -> bool {
-        self.getv(pos).map(|c| !c.is_whitespace()).unwrap_or(false)
-    }
-
-    /// Set the cell at `pos` to `c`.
-    pub(crate) fn setv(&mut self, force: bool, pos: Vec2, c: char) {
-        if force {
-            self.edits.push(Cell { pos, c });
-            return;
-        }
-
-        let max_prec = precedence(c);
-        let overrides = |_c| _c == c || precedence(_c) > max_prec;
-
-        let mut overridden = self.getv(pos).map(overrides).unwrap_or(false);
-
-        overridden |= self
-            .edits
-            .iter()
-            .filter(|cell| cell.pos == pos)
-            .any(|cell| overrides(cell.c));
-
-        if !overridden {
-            self.edits.push(Cell { pos, c });
-        }
-    }
-
-    /// Set the cell at `(x, y)` to `c`.
-    pub(crate) fn set(&mut self, force: bool, x: usize, y: usize, c: char) {
-        self.setv(force, Vec2::new(x, y), c)
-    }
-
-    /// Flush any pending edits to the primary buffer, allocating as necessary.
-    fn flush_edits(&mut self) {
-        for Cell { pos, c } in self.edits.drain(..) {
-            self.chars
-                .set_at_forced(LibraryPoint::new(pos.x, pos.y), c);
-        }
-        self.chars.commit();
-    }
-
-    /// Discard any pending edits.
-    fn discard_edits(&mut self) {
-        self.edits.clear();
-    }
-
-    fn preview_library<F: FnOnce(&mut LibraryBuffer)>(&mut self, render: F) {
-        let mut buffer = self.chars.clone();
-        render(&mut buffer);
-        self.edits.extend(buffer.pending_cells().map(|(position, c)| Cell {
-            pos: Vec2::new(position.x, position.y),
-            c,
-        }));
-    }
-
-    /// Draw a line from `src` to `dst`.
-    pub(crate) fn draw_line(&mut self, src: Vec2, dst: Vec2) {
-        self.preview_library(|buffer| {
-            buffer.draw_line(point(src), point(dst));
-        });
-    }
-
-    /// Draw an arrow tip for an arrow from `src` to `dst`.
-    pub(crate) fn draw_arrow_tip(&mut self, src: Vec2, dst: Vec2) {
-        self.preview_library(|buffer| {
-            buffer.draw_arrow_tip(point(src), point(dst));
-        });
-    }
-
-    pub(crate) fn snap45(&self, src: Vec2, dst: Vec2) -> Vec2 {
-        vec2(self.chars.snap45(point(src), point(dst)))
-    }
-
-    pub(crate) fn snap90(&self, src: Vec2, dst: Vec2) -> Vec2 {
-        vec2(self.chars.snap90(point(src), point(dst)))
-    }
-
-    /// Draw the shortest path from `src` to `dst`. Returns the penultimate point
-    /// along that path.
-    pub(crate) fn draw_path(&mut self, src: Vec2, dst: Vec2) -> Vec2 {
-        let mut path = self.chars.clone();
-        let last = path.draw_path(point(src), point(dst));
-        self.edits.extend(path.pending_cells().map(|(position, c)| Cell {
-            pos: Vec2::new(position.x, position.y),
-            c,
-        }));
-        vec2(last)
-    }
-
-}
-
-fn point(position: Vec2) -> LibraryPoint {
-    LibraryPoint::new(position.x, position.y)
-}
-
-fn vec2(position: LibraryPoint) -> Vec2 {
-    Vec2::new(position.x, position.y)
-}
-
-/// Returns the overlap precedence for `c`.
-fn precedence(c: char) -> usize {
-    match c {
-        PLUS => 5,
-        DASH => 4,
-        PIPE => 3,
-        DIAG => 2,
-        GAID => 1,
-        _ => 0,
-    }
-}
 
 /// Returns `true` if `a` is within `w` of `b` (inclusive).
 fn within(w: usize, a: usize, b: usize) -> bool {
@@ -865,11 +570,11 @@ mod tests {
         Vec2::new(x, y)
     }
 
-    fn buffer(input: &str) -> Buffer {
-        Buffer::read_from(input.as_bytes()).unwrap()
+    fn buffer(input: &str) -> PreviewBuffer {
+        PreviewBuffer::read_from(input.as_bytes()).unwrap()
     }
 
-    fn text(buf: &Buffer) -> String {
+    fn text(buf: &PreviewBuffer) -> String {
         buf.iter("").collect()
     }
 
@@ -975,18 +680,31 @@ mod tests {
     }
 
     #[test]
+    fn clearing_preview_buffer_removes_content_edits_and_cursor() {
+        let mut buf = buffer("a\n");
+        buf.set(true, 2, 1, 'z');
+        buf.set_cursor(point(3, 2));
+
+        buf.clear();
+
+        assert_eq!(text(&buf), "");
+        assert_eq!(buf.bounds(), point(0, 0));
+        assert_eq!(buf.iter_within(point(0, 0), point(4, 3)).count(), 0);
+    }
+
+    #[test]
     fn drawing_lines_produces_horizontal_vertical_and_diagonal_strokes() {
-        let mut horizontal = Buffer::default();
+        let mut horizontal = PreviewBuffer::default();
         horizontal.draw_line(point(0, 0), point(3, 0));
         horizontal.flush_edits();
         assert_eq!(text(&horizontal), "+--+\n");
 
-        let mut vertical = Buffer::default();
+        let mut vertical = PreviewBuffer::default();
         vertical.draw_line(point(0, 0), point(0, 2));
         vertical.flush_edits();
         assert_eq!(text(&vertical), "+\n|\n+\n");
 
-        let mut diagonal = Buffer::default();
+        let mut diagonal = PreviewBuffer::default();
         diagonal.draw_line(point(0, 0), point(2, 2));
         diagonal.flush_edits();
         assert_eq!(text(&diagonal), "+\n \\\n  +\n");
@@ -1002,7 +720,7 @@ mod tests {
         ];
 
         for (src, dst, stroke, middle) in cases {
-            let mut buf = Buffer::default();
+            let mut buf = PreviewBuffer::default();
             buf.draw_line(src, dst);
             buf.flush_edits();
             for pos in middle {
@@ -1115,7 +833,7 @@ mod tests {
         ];
 
         for (src, dst, expected) in cases {
-            let mut buf = Buffer::default();
+            let mut buf = PreviewBuffer::default();
             buf.draw_arrow_tip(src, dst);
             buf.flush_edits();
             assert_eq!(buf.getv(dst), Some(expected), "{src:?} -> {dst:?}");
@@ -1161,7 +879,7 @@ mod tests {
         ];
 
         for &(src, dst, occupied, expected) in cases {
-            let mut buf = Buffer::default();
+            let mut buf = PreviewBuffer::default();
             for &pos in occupied {
                 buf.setv(true, pos, 'x');
             }
@@ -1205,7 +923,7 @@ mod tests {
 
     #[test]
     fn snap45_preserves_direction_in_all_diagonal_quadrants() {
-        let buf = Buffer::default();
+        let buf = PreviewBuffer::default();
         assert_eq!(buf.snap45(point(3, 3), point(1, 0)), point(3, 2));
         assert_eq!(buf.snap45(point(3, 3), point(7, 1)), point(5, 3));
         assert_eq!(buf.snap45(point(3, 3), point(1, 6)), point(3, 4));

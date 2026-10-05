@@ -23,6 +23,7 @@
 #![allow(clippy::many_single_char_names)]
 mod editor;
 mod modeline;
+mod preview_buffer;
 mod tools;
 mod ui;
 
