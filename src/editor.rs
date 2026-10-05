@@ -1145,3 +1145,603 @@ fn gcd(mut a: isize, mut b: isize) -> isize {
     }
     a.abs()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cursive::event::{Key, MouseEvent};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn point(x: usize, y: usize) -> Vec2 {
+        Vec2::new(x, y)
+    }
+
+    fn buffer(input: &str) -> Buffer {
+        Buffer::read_from(input.as_bytes()).unwrap()
+    }
+
+    fn text(buf: &Buffer) -> String {
+        buf.iter("").collect()
+    }
+
+    fn editor() -> Editor {
+        Editor::open(Options {
+            path_mode: PathMode::Snap90,
+            keep_trailing_ws: false,
+            strip_margin_ws: false,
+            file: None,
+        })
+        .unwrap()
+    }
+
+    fn tool_view() -> ScrollView<EditorView> {
+        let view = EditorView {
+            inner: Rc::new(RwLock::new(editor())),
+        };
+        let mut scroll = ScrollView::new(view).scroll_x(true).scroll_y(true);
+        scroll.layout(Vec2::new(20, 8));
+        scroll
+    }
+
+    fn left_mouse(event: MouseEvent, position: Vec2) -> Event {
+        Event::Mouse {
+            offset: Vec2::new(0, 0),
+            position,
+            event,
+        }
+    }
+
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "skizze-test-{}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            ));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn reading_and_rendering_preserve_lines_and_prefixes() {
+        let buf = buffer("  a\n\n b  \n");
+        assert_eq!(text(&buf), "  a\n\n b  \n");
+        assert_eq!(buf.iter("# ").collect::<String>(), "#   a\n# \n#  b  \n");
+        assert_eq!(buf.getv(point(2, 0)), Some('a'));
+        assert_eq!(buf.getv(point(0, 1)), None);
+    }
+
+    #[test]
+    fn edits_are_previewed_until_flushed_or_discarded() {
+        let mut buf = buffer("a\n");
+        buf.set(true, 2, 1, 'z');
+        assert_eq!(text(&buf), "a\n");
+        assert_eq!(buf.bounds(), point(3, 2));
+        assert!(buf.iter_within(point(2, 1), point(1, 1)).any(|c| {
+            matches!(c, Char::Dirty(Cell { c: 'z', .. }))
+        }));
+        buf.discard_edits();
+        assert_eq!(buf.bounds(), point(1, 1));
+        buf.set(true, 2, 1, 'z');
+        buf.flush_edits();
+        assert_eq!(text(&buf), "a\n  z\n");
+        assert_eq!(buf.getv(point(2, 1)), Some('z'));
+    }
+
+    #[test]
+    fn non_forced_edits_respect_overlap_precedence() {
+        let mut buf = buffer("-\n");
+        buf.set(false, 0, 0, '|');
+        buf.set(false, 1, 0, '|');
+        buf.set(false, 1, 0, '+');
+        buf.flush_edits();
+        assert_eq!(text(&buf), "-+\n");
+        buf.set(true, 0, 0, 'x');
+        buf.flush_edits();
+        assert_eq!(text(&buf), "x+\n");
+    }
+
+    #[test]
+    fn whitespace_cleanup_has_distinct_trailing_and_margin_modes() {
+        let original = buffer("   \n  a  \n    b \n \n");
+        let mut trailing = original.clone();
+        trailing.strip_trailing_whitespace();
+        assert_eq!(text(&trailing), "\n  a\n    b\n\n");
+        let mut margins = original;
+        margins.strip_margin_whitespace();
+        assert_eq!(text(&margins), "a\n  b\n");
+    }
+
+    #[test]
+    fn drawing_lines_produces_horizontal_vertical_and_diagonal_strokes() {
+        let mut horizontal = Buffer::default();
+        horizontal.draw_line(point(0, 0), point(3, 0));
+        horizontal.flush_edits();
+        assert_eq!(text(&horizontal), "+--+\n");
+
+        let mut vertical = Buffer::default();
+        vertical.draw_line(point(0, 0), point(0, 2));
+        vertical.flush_edits();
+        assert_eq!(text(&vertical), "+\n|\n+\n");
+
+        let mut diagonal = Buffer::default();
+        diagonal.draw_line(point(0, 0), point(2, 2));
+        diagonal.flush_edits();
+        assert_eq!(text(&diagonal), "+\n \\\n  +\n");
+    }
+
+    #[test]
+    fn drawing_lines_preserves_both_diagonal_orientations_in_reverse() {
+        let cases = [
+            (point(2, 0), point(0, 2), '/', vec![point(1, 1)]),
+            (point(0, 2), point(2, 0), '/', vec![point(1, 1)]),
+            (point(2, 2), point(0, 0), '\\', vec![point(1, 1)]),
+            (point(0, 0), point(2, 2), '\\', vec![point(1, 1)]),
+        ];
+
+        for (src, dst, stroke, middle) in cases {
+            let mut buf = Buffer::default();
+            buf.draw_line(src, dst);
+            buf.flush_edits();
+            for pos in middle {
+                assert_eq!(buf.getv(pos), Some(stroke), "{src:?} -> {dst:?}");
+            }
+            assert_eq!(buf.getv(src), Some('+'));
+            assert_eq!(buf.getv(dst), Some('+'));
+        }
+    }
+
+    #[test]
+    fn snap_modes_choose_existing_horizontal_strokes_and_diagonal_corners() {
+        let mut buf = buffer("    -\n");
+        assert_eq!(buf.snap90(point(1, 1), point(4, 0)), point(4, 1));
+        assert_eq!(buf.snap90(point(1, 1), point(3, 0)), point(1, 0));
+        assert_eq!(buf.snap45(point(1, 1), point(4, 3)), point(2, 1));
+        buf.draw_arrow_tip(point(1, 1), point(1, 0));
+        buf.flush_edits();
+        assert_eq!(buf.getv(point(1, 0)), Some('^'));
+    }
+
+    #[test]
+    fn routed_path_avoids_existing_content() {
+        let mut buf = buffer(" + \n");
+        let last = buf.draw_path(point(0, 0), point(2, 0));
+        buf.flush_edits();
+        assert_eq!(last, point(1, 1));
+        assert_eq!(buf.getv(point(1, 0)), Some('+'));
+        assert_eq!(buf.getv(point(0, 0)), Some('+'));
+        assert_eq!(buf.getv(point(2, 0)), Some('+'));
+    }
+
+    #[test]
+    fn routed_path_connects_two_sides_of_a_component_without_drawing_through_it() {
+        // A user can route a connector around a component instead of obscuring its label.
+        let mut diagram = buffer("  +-----+\n  | API |\n  +-----+\n");
+        let original = diagram.clone();
+        let last = diagram.draw_path(point(0, 1), point(10, 1));
+        diagram.flush_edits();
+
+        assert_eq!(diagram.getv(point(0, 1)), Some('+'));
+        assert_eq!(diagram.getv(point(10, 1)), Some('+'));
+        assert!(last.y > 1, "the route should go below the component");
+        for y in 0..3 {
+            for x in 2..9 {
+                assert_eq!(diagram.getv(point(x, y)), original.getv(point(x, y)));
+            }
+        }
+    }
+
+    #[test]
+    fn routed_path_goes_around_a_gateway_between_two_components() {
+        // In a small architecture diagram, a connection from UI to DB must avoid
+        // the gateway box that lies between them.
+        let mut diagram = buffer("+---+ +---+ +---+\n| UI| |GW | |DB |\n+---+ +---+ +---+\n");
+        let original = diagram.clone();
+        let last = diagram.draw_path(point(4, 1), point(12, 1));
+        diagram.flush_edits();
+
+        assert_eq!(diagram.getv(point(4, 1)), Some('+'));
+        assert_eq!(diagram.getv(point(12, 1)), Some('+'));
+        assert!(last.y > 1, "the route should go below the gateway");
+        for y in 0..3 {
+            for x in 6..11 {
+                assert_eq!(diagram.getv(point(x, y)), original.getv(point(x, y)));
+            }
+        }
+    }
+
+    #[test]
+    fn routed_arrow_tool_avoids_a_component_and_draws_an_arrowhead() {
+        let mut view = tool_view();
+        let obstacle = buffer("  +-----+\n  | API |\n  +-----+\n");
+        view.get_inner_mut().write().buffer = obstacle.clone();
+        let mut tool = ArrowTool::default();
+        tool.load_opts(&Options {
+            path_mode: PathMode::Routed,
+            keep_trailing_ws: false,
+            strip_margin_ws: false,
+            file: None,
+        });
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 1)));
+            tool.on_event(&mut ctx, &left_mouse(Hold(Left), point(10, 1)));
+            tool.on_event(&mut ctx, &left_mouse(Release(Left), point(10, 1)));
+        }
+
+        let diagram = &view.get_inner().read().buffer;
+        for y in 0..3 {
+            for x in 2..9 {
+                assert_eq!(diagram.getv(point(x, y)), obstacle.getv(point(x, y)));
+            }
+        }
+        assert!(matches!(diagram.getv(point(10, 1)), Some('^' | '>' | 'v' | '<')));
+    }
+
+    #[test]
+    fn arrows_point_in_the_draw_direction_and_follow_adjacent_strokes() {
+        let cases = [
+            (point(1, 1), point(1, 0), '^'),
+            (point(1, 1), point(2, 1), '>'),
+            (point(1, 1), point(1, 2), 'v'),
+            (point(1, 1), point(0, 1), '<'),
+            (point(1, 1), point(2, 0), '^'),
+            (point(1, 1), point(0, 0), '^'),
+            (point(1, 1), point(2, 2), 'v'),
+            (point(1, 1), point(0, 2), 'v'),
+        ];
+
+        for (src, dst, expected) in cases {
+            let mut buf = Buffer::default();
+            buf.draw_arrow_tip(src, dst);
+            buf.flush_edits();
+            assert_eq!(buf.getv(dst), Some(expected), "{src:?} -> {dst:?}");
+        }
+
+        // An arrow ending on a horizontal stroke uses its direction rather than
+        // replacing the connected stroke with a vertical arrowhead.
+        let mut connected = buffer(" - \n");
+        connected.draw_arrow_tip(point(0, 0), point(1, 0));
+        connected.flush_edits();
+        assert_eq!(connected.getv(point(1, 0)), Some('>'));
+    }
+
+    #[test]
+    fn arrow_tips_follow_the_adjacent_stroke_matrix() {
+        let cases: &[(Vec2, Vec2, &[Vec2], char)] = &[
+            // Cardinal tips turn toward one adjacent stroke, but retain their
+            // direction when the forward cell or both lateral cells are occupied.
+            (point(3, 5), point(3, 3), &[point(2, 3)], '<'),
+            (point(3, 5), point(3, 3), &[point(4, 3)], '>'),
+            (point(3, 5), point(3, 3), &[point(2, 3), point(4, 3)], '^'),
+            (point(1, 3), point(3, 3), &[point(3, 2)], '^'),
+            (point(1, 3), point(3, 3), &[point(3, 4)], 'v'),
+            (point(1, 3), point(3, 3), &[point(3, 2), point(3, 4)], '>'),
+            (point(3, 1), point(3, 3), &[point(4, 3)], '>'),
+            (point(3, 1), point(3, 3), &[point(2, 3)], '<'),
+            (point(3, 1), point(3, 3), &[point(2, 3), point(4, 3)], 'v'),
+            (point(5, 3), point(3, 3), &[point(3, 4)], 'v'),
+            (point(5, 3), point(3, 3), &[point(3, 2)], '^'),
+            (point(5, 3), point(3, 3), &[point(3, 2), point(3, 4)], '<'),
+            // Diagonal tips prefer the horizontal direction if space exists.
+            (point(1, 1), point(3, 3), &[], 'v'),
+            (point(1, 1), point(3, 3), &[point(4, 3)], '>'),
+            (point(1, 5), point(3, 3), &[], '^'),
+            (point(1, 5), point(3, 3), &[point(4, 3)], '>'),
+            (point(5, 1), point(3, 3), &[], 'v'),
+            (point(5, 1), point(3, 3), &[point(2, 3)], '<'),
+            (point(5, 5), point(3, 3), &[], '^'),
+            (point(5, 5), point(3, 3), &[point(2, 3)], '<'),
+            // West-facing diagonals must not inspect x - 1 at the left edge.
+            (point(2, 1), point(0, 3), &[], 'v'),
+            (point(2, 5), point(0, 3), &[], '^'),
+        ];
+
+        for &(src, dst, occupied, expected) in cases {
+            let mut buf = Buffer::default();
+            for &pos in occupied {
+                buf.setv(true, pos, 'x');
+            }
+            buf.flush_edits();
+            buf.draw_arrow_tip(src, dst);
+            buf.flush_edits();
+
+            assert_eq!(buf.getv(dst), Some(expected), "{src:?} -> {dst:?}");
+        }
+    }
+
+    #[test]
+    fn arrow_tool_handles_left_edge_and_adjacent_collision_tips() {
+        let mut edge_view = tool_view();
+        let mut edge_tool = ArrowTool::default();
+        edge_tool.load_opts(&Options {
+            path_mode: PathMode::Snap45,
+            keep_trailing_ws: false,
+            strip_margin_ws: false,
+            file: None,
+        });
+        {
+            let mut ctx = EditorCtx::new(&mut edge_view);
+            edge_tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+            edge_tool.on_event(&mut ctx, &left_mouse(Hold(Left), point(0, 3)));
+            edge_tool.on_event(&mut ctx, &left_mouse(Release(Left), point(0, 3)));
+        }
+        assert_eq!(edge_view.get_inner().read().buffer.getv(point(0, 3)), Some('v'));
+
+        let mut collision_view = tool_view();
+        collision_view.get_inner_mut().write().buffer = buffer("  x\n");
+        let mut collision_tool = ArrowTool::default();
+        {
+            let mut ctx = EditorCtx::new(&mut collision_view);
+            collision_tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 1)));
+            collision_tool.on_event(&mut ctx, &left_mouse(Hold(Left), point(2, 1)));
+            collision_tool.on_event(&mut ctx, &left_mouse(Release(Left), point(2, 1)));
+        }
+        assert_eq!(collision_view.get_inner().read().buffer.getv(point(2, 1)), Some('^'));
+    }
+
+    #[test]
+    fn snap45_preserves_direction_in_all_diagonal_quadrants() {
+        let buf = Buffer::default();
+        assert_eq!(buf.snap45(point(3, 3), point(1, 0)), point(3, 2));
+        assert_eq!(buf.snap45(point(3, 3), point(7, 1)), point(5, 3));
+        assert_eq!(buf.snap45(point(3, 3), point(1, 6)), point(3, 4));
+        assert_eq!(buf.snap45(point(3, 3), point(7, 6)), point(4, 3));
+    }
+
+    #[test]
+    fn text_tool_supports_multiline_editing_cancel_and_commit() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+            tool.on_event(&mut ctx, &Event::Char('h'));
+            tool.on_event(&mut ctx, &Event::Char('i'));
+            tool.on_event(&mut ctx, &Event::Key(Key::Enter));
+            tool.on_event(&mut ctx, &Event::Char('!'));
+            tool.on_event(&mut ctx, &Event::Key(Key::Up));
+            tool.on_event(&mut ctx, &Event::Key(Key::Backspace));
+            tool.on_event(&mut ctx, &Event::Key(Key::Esc));
+        }
+        assert_eq!(text(&view.get_inner().read().buffer), "");
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+            tool.on_event(&mut ctx, &Event::Char('o'));
+            tool.on_event(&mut ctx, &Event::Char('k'));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+        }
+        assert_eq!(text(&view.get_inner().read().buffer), "\n  ok\n");
+    }
+
+    #[test]
+    fn text_tool_lets_a_user_insert_text_at_the_cursor() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+            for c in "cat".chars() {
+                tool.on_event(&mut ctx, &Event::Char(c));
+            }
+            // Move between "c" and "a", then insert a character there.
+            tool.on_event(&mut ctx, &Event::Key(Key::Left));
+            tool.on_event(&mut ctx, &Event::Key(Key::Left));
+            tool.on_event(&mut ctx, &Event::Char('r'));
+            // Moving right at the end stays at the end instead of creating a gap.
+            tool.on_event(&mut ctx, &Event::Key(Key::Right));
+            tool.on_event(&mut ctx, &Event::Key(Key::Right));
+            tool.on_event(&mut ctx, &Event::Key(Key::Right));
+            tool.on_event(&mut ctx, &Event::Char('!'));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(2, 1)));
+        }
+
+        assert_eq!(text(&view.get_inner().read().buffer), "\n  crat!\n");
+    }
+
+    #[test]
+    fn text_tool_keeps_the_cursor_on_a_shorter_line() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+            tool.on_event(&mut ctx, &Event::Char('a'));
+            tool.on_event(&mut ctx, &Event::Key(Key::Enter));
+            for c in "wide".chars() {
+                tool.on_event(&mut ctx, &Event::Char(c));
+            }
+            // Going up from column four lands at the end of the one-character line.
+            tool.on_event(&mut ctx, &Event::Key(Key::Up));
+            tool.on_event(&mut ctx, &Event::Char('X'));
+            // Going back down keeps the current column when that line has room.
+            tool.on_event(&mut ctx, &Event::Key(Key::Down));
+            tool.on_event(&mut ctx, &Event::Char('Y'));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+        }
+
+        assert_eq!(text(&view.get_inner().read().buffer), "aX\nwiYde\n");
+    }
+
+    #[test]
+    fn text_tool_backspace_at_the_start_of_a_line_joins_it_to_the_previous_line() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+            for c in "hello".chars() {
+                tool.on_event(&mut ctx, &Event::Char(c));
+            }
+            // Split before the word, then use Backspace at the start of line two.
+            for _ in 0..5 {
+                tool.on_event(&mut ctx, &Event::Key(Key::Left));
+            }
+            tool.on_event(&mut ctx, &Event::Key(Key::Enter));
+            tool.on_event(&mut ctx, &Event::Key(Key::Backspace));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+        }
+
+        assert_eq!(text(&view.get_inner().read().buffer), "hello\n");
+    }
+
+    #[test]
+    fn text_tool_deletes_before_the_cursor_with_backspace_and_delete() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+            for c in "abcd".chars() {
+                tool.on_event(&mut ctx, &Event::Char(c));
+            }
+            tool.on_event(&mut ctx, &Event::Key(Key::Left));
+            tool.on_event(&mut ctx, &Event::Key(Key::Left));
+            tool.on_event(&mut ctx, &Event::Key(Key::Backspace));
+            tool.on_event(&mut ctx, &Event::Key(Key::Del));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+        }
+
+        assert_eq!(text(&view.get_inner().read().buffer), "cd\n");
+    }
+
+    #[test]
+    fn right_mouse_drag_pans_the_viewport_in_both_directions() {
+        let mut view = tool_view();
+        view.get_inner_mut().write().canvas = point(100, 100);
+        view.layout(Vec2::new(20, 8));
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            ctx.on_event(&left_mouse(Press(Right), point(10, 5)));
+            ctx.on_event(&left_mouse(Hold(Right), point(6, 2)));
+        }
+        assert_eq!(view.content_viewport().top_left(), point(4, 3));
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            ctx.on_event(&left_mouse(Hold(Right), point(9, 4)));
+            ctx.on_event(&left_mouse(Release(Right), point(9, 4)));
+        }
+        assert_eq!(view.content_viewport().top_left(), point(1, 1));
+    }
+
+    #[test]
+    fn text_tool_scrolls_the_viewport_when_typing_beyond_its_edge() {
+        let mut view = tool_view();
+        let mut tool = TextTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(30, 15)));
+            tool.on_event(&mut ctx, &Event::Char('x'));
+        }
+        // The next render makes the newly expanded canvas available to the
+        // scroll view; subsequent input must then bring the cursor on-screen.
+        view.layout(Vec2::new(20, 8));
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            tool.on_event(&mut ctx, &Event::Char('y'));
+        }
+
+        assert!(view.content_viewport().top_left().x > 0);
+        assert!(view.content_viewport().top_left().y > 0);
+        let editor = view.get_inner().read();
+        assert!(editor.canvas.x >= 33);
+        assert!(editor.canvas.y >= 16);
+    }
+
+    #[test]
+    fn move_tool_selects_then_moves_content_on_mouse_release() {
+        let mut view = tool_view();
+        view.get_inner_mut().write().buffer = buffer("ab\n");
+        let mut tool = MoveTool::default();
+
+        {
+            let mut ctx = EditorCtx::new(&mut view);
+            // Select the label, then grab it and drag it down and right.
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+            tool.on_event(&mut ctx, &left_mouse(Hold(Left), point(1, 0)));
+            tool.on_event(&mut ctx, &left_mouse(Release(Left), point(1, 0)));
+            tool.on_event(&mut ctx, &left_mouse(Press(Left), point(0, 0)));
+            tool.on_event(&mut ctx, &left_mouse(Hold(Left), point(2, 1)));
+            tool.on_event(&mut ctx, &left_mouse(Release(Left), point(2, 1)));
+        }
+
+        assert_eq!(text(&view.get_inner().read().buffer), "  \n  ab\n");
+    }
+
+    #[test]
+    fn undo_redo_and_clear_track_saved_state() {
+        let mut ed = editor();
+        assert!(!ed.is_dirty());
+        assert!(!ed.undo());
+        ed.with_snapshot(|ed| {
+            ed.buffer.set(true, 0, 0, 'a');
+            ed.buffer.flush_edits();
+        });
+        assert!(ed.is_dirty());
+        assert_eq!(text(&ed.buffer), "a\n");
+        assert!(ed.undo());
+        assert!(!ed.is_dirty());
+        assert_eq!(text(&ed.buffer), "");
+        assert!(ed.redo());
+        assert!(ed.is_dirty());
+        assert_eq!(text(&ed.buffer), "a\n");
+        ed.clear();
+        assert!(!ed.is_dirty());
+        assert!(!ed.redo());
+        assert_eq!(ed.path(), None);
+    }
+
+    #[test]
+    fn saving_trims_trailing_spaces_and_opening_restores_saved_content() {
+        let path = TempFile::new();
+        let mut ed = editor();
+        assert!(!ed.save().unwrap());
+        ed.with_snapshot(|ed| ed.buffer = buffer("a  \n b \n"));
+        ed.save_as(&path.0).unwrap();
+        assert_eq!(fs::read_to_string(&path.0).unwrap(), "a\n b\n");
+        assert!(!ed.is_dirty());
+        ed.with_snapshot(|ed| ed.buffer = buffer("changed\n"));
+        ed.open_file(&path.0).unwrap();
+        assert_eq!(text(&ed.buffer), "a\n b\n");
+        assert!(!ed.is_dirty());
+        assert_eq!(ed.path(), Some(&path.0));
+    }
+
+    #[test]
+    fn save_options_control_whitespace_cleanup() {
+        let kept = TempFile::new();
+        let stripped = TempFile::new();
+        let mut ed = editor();
+        ed.buffer = buffer("  a  \n  b \n");
+        ed.opts.keep_trailing_ws = true;
+        ed.save_as(&kept.0).unwrap();
+        assert_eq!(fs::read_to_string(&kept.0).unwrap(), "  a  \n  b \n");
+        ed.opts.strip_margin_ws = true;
+        ed.save_as(&stripped.0).unwrap();
+        assert_eq!(fs::read_to_string(&stripped.0).unwrap(), "a\nb\n");
+    }
+}

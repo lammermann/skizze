@@ -462,3 +462,66 @@ impl MoveTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn preview_at(buf: &Buffer, x: usize, y: usize) -> Option<char> {
+        buf.iter_within(Vec2::new(x, y), Vec2::new(1, 1))
+            .filter_map(|c| match c {
+                Char::Dirty(cell) if cell.pos() == Vec2::new(x, y) => Some(cell.c()),
+                _ => None,
+            })
+            .last()
+    }
+
+    #[test]
+    fn selection_only_includes_non_whitespace_cells_inside_rectangle() {
+        let mut buf = Buffer::default();
+        buf.set(true, 0, 0, 'a');
+        buf.set(true, 0, 1, ' ');
+        buf.set(true, 1, 1, 'c');
+        let selected: Vec<_> = visible_cells(&buf, (Vec2::new(0, 0), Vec2::new(1, 1)))
+            .map(|cell| (cell.pos(), cell.c()))
+            .collect();
+        assert_eq!(selected, vec![(Vec2::new(0, 0), 'a'), (Vec2::new(1, 1), 'c')]);
+    }
+
+    #[test]
+    fn text_render_is_a_preview_until_edits_are_flushed() {
+        let mut buf = Buffer::default();
+        let mut tool = TextTool::default();
+        tool.src = Some(Vec2::new(2, 1));
+        tool.buffer = vec![vec!['h', 'i'], vec!['!']];
+        tool.cursor = Vec2::new(1, 1);
+        tool.render(&mut buf);
+        assert_eq!(buf.getv(Vec2::new(2, 1)), None);
+        assert_eq!(preview_at(&buf, 2, 1), Some('h'));
+        assert_eq!(preview_at(&buf, 3, 1), Some('i'));
+        assert_eq!(preview_at(&buf, 2, 2), Some('!'));
+        tool.reset();
+        assert!(tool.src.is_none());
+        assert!(tool.buffer.is_empty());
+    }
+
+    #[test]
+    fn moving_selection_clears_origin_and_places_content_at_destination() {
+        let mut buf = Buffer::default();
+        for (x, y, c) in [(0, 0, 'a'), (1, 0, 'b')] {
+            buf.set(true, x, y, c);
+        }
+        let tool = MoveTool {
+            src: Some(Vec2::new(0, 0)),
+            dst: Some(Vec2::new(1, 0)),
+            grab_src: Some(Vec2::new(0, 0)),
+            grab_dst: Some(Vec2::new(1, 1)),
+        };
+        tool.render(&mut buf);
+        assert_eq!(preview_at(&buf, 0, 0), Some(' '));
+        assert_eq!(preview_at(&buf, 1, 0), Some(' '));
+        assert_eq!(preview_at(&buf, 0, 1), None);
+        assert_eq!(preview_at(&buf, 1, 1), Some('a'));
+        assert_eq!(preview_at(&buf, 2, 1), Some('b'));
+    }
+}
