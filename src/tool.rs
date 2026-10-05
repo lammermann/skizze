@@ -10,6 +10,26 @@ pub enum PathMode {
 }
 
 impl Buffer {
+    /// Stage spaces over non-whitespace cells in the inclusive rectangle.
+    pub fn erase_box(&mut self, first: Point, second: Point) {
+        let min_x = first.x.min(second.x);
+        let max_x = first.x.max(second.x);
+        let min_y = first.y.min(second.y);
+        let max_y = first.y.max(second.y);
+        let cells: Vec<_> = self
+            .committed_cells()
+            .filter(|(point, c)| {
+                (min_x..=max_x).contains(&point.x)
+                    && (min_y..=max_y).contains(&point.y)
+                    && !c.is_whitespace()
+            })
+            .map(|(point, _)| point)
+            .collect();
+        for point in cells {
+            self.set_at_forced(point, ' ');
+        }
+    }
+
     /// Draw a rectangular box between opposite corners.
     pub fn draw_box(&mut self, top_left: Point, bottom_right: Point) {
         self.draw_line(top_left, Point::new(bottom_right.x, top_left.y));

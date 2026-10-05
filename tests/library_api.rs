@@ -106,6 +106,14 @@ fn document_tracks_save_state_and_history() {
 }
 
 #[test]
+fn library_buffer_erases_only_visible_cells_in_a_box() {
+    let mut buffer = Buffer::from_text("ab\n c\n");
+    buffer.erase_box(Point::new(0, 0), Point::new(0, 1));
+    buffer.commit();
+    assert_eq!(buffer.render(""), " b\n c\n");
+}
+
+#[test]
 fn library_buffer_draws_boxes() {
     let mut buffer = Buffer::default();
     buffer.draw_box(Point::new(0, 0), Point::new(2, 1));

@@ -314,11 +314,8 @@ simple_display! { EraseTool, "Erase" }
 
 impl Tool for EraseTool {
     fn_on_event_drag!(|t: &Self, buf: &mut Buffer| {
-        let state: Vec<_> = visible_cells(buf, option!(t.src, t.dst)).collect();
-
-        for cell in state {
-            buf.setv(true, cell.pos(), SP);
-        }
+        let (src, dst) = option!(t.src, t.dst);
+        buf.erase_box(src, dst);
     });
 }
 
