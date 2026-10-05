@@ -3,7 +3,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 use super::{
-    editor::{EditorCtx, CONSUMED, SP},
+    editor::{EditorCtx, CONSUMED},
     preview_buffer::{Cell, Char, PreviewBuffer as Buffer},
     Options,
 };
@@ -294,18 +294,6 @@ impl Tool for EraseTool {
     });
 }
 
-fn visible_cells<'a>(buf: &'a Buffer, cs: (Vec2, Vec2)) -> impl Iterator<Item = Cell> + 'a {
-    let area = Rect::from_corners(cs.0, cs.1);
-
-    buf.iter_within(area.top_left(), area.size())
-        .filter_map(|c| match c {
-            Char::Clean(cell) => Some(cell),
-            Char::Dirty(cell) => Some(cell),
-            _ => None,
-        })
-        .filter(|cell| !cell.is_whitespace())
-}
-
 #[derive(Copy, Clone, Default)]
 pub(crate) struct MoveTool {
     src: Option<Vec2>,
@@ -372,23 +360,8 @@ impl Tool for MoveTool {
 impl MoveTool {
     fn render(&self, buf: &mut Buffer) {
         let (src, dst) = option!(self.src, self.dst);
-
-        let state: Vec<_> = visible_cells(buf, (src, dst)).collect();
-
         if let (Some(grab_src), Some(grab_dst)) = (self.grab_src, self.grab_dst) {
-            for cell in state.iter() {
-                buf.setv(true, cell.pos(), SP);
-            }
-
-            let delta = grab_dst.signed() - grab_src.signed();
-
-            for cell in state.into_iter().map(|cell| cell.translate(delta)) {
-                buf.setv(true, cell.pos(), cell.c());
-            }
-        } else {
-            for cell in state {
-                buf.setv(true, cell.pos(), cell.c());
-            }
+            buf.move_box(src, dst, grab_dst.signed() - grab_src.signed());
         }
     }
 }
@@ -404,18 +377,6 @@ mod tests {
                 _ => None,
             })
             .last()
-    }
-
-    #[test]
-    fn selection_only_includes_non_whitespace_cells_inside_rectangle() {
-        let mut buf = Buffer::default();
-        buf.set(true, 0, 0, 'a');
-        buf.set(true, 0, 1, ' ');
-        buf.set(true, 1, 1, 'c');
-        let selected: Vec<_> = visible_cells(&buf, (Vec2::new(0, 0), Vec2::new(1, 1)))
-            .map(|cell| (cell.pos(), cell.c()))
-            .collect();
-        assert_eq!(selected, vec![(Vec2::new(0, 0), 'a'), (Vec2::new(1, 1), 'c')]);
     }
 
     #[test]
@@ -444,6 +405,7 @@ mod tests {
         for (x, y, c) in [(0, 0, 'a'), (1, 0, 'b')] {
             buf.set(true, x, y, c);
         }
+        buf.flush_edits();
         let tool = MoveTool {
             src: Some(Vec2::new(0, 0)),
             dst: Some(Vec2::new(1, 0)),

@@ -19,6 +19,31 @@ impl Buffer {
         }
     }
 
+    /// Move non-whitespace committed cells in an inclusive rectangle by `delta`.
+    pub fn move_box(&mut self, first: Point, second: Point, delta: (isize, isize)) {
+        let min_x = first.x.min(second.x);
+        let max_x = first.x.max(second.x);
+        let min_y = first.y.min(second.y);
+        let max_y = first.y.max(second.y);
+        let cells: Vec<_> = self
+            .committed_cells()
+            .filter(|(point, c)| {
+                (min_x..=max_x).contains(&point.x)
+                    && (min_y..=max_y).contains(&point.y)
+                    && !c.is_whitespace()
+            })
+            .collect();
+        for (point, _) in &cells {
+            self.set_at_forced(*point, ' ');
+        }
+        for (point, c) in cells {
+            self.set_at_forced(
+                Point::new(point.x.saturating_add_signed(delta.0), point.y.saturating_add_signed(delta.1)),
+                c,
+            );
+        }
+    }
+
     /// Stage spaces over non-whitespace cells in the inclusive rectangle.
     pub fn erase_box(&mut self, first: Point, second: Point) {
         let min_x = first.x.min(second.x);

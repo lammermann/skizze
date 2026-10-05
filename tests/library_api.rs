@@ -132,6 +132,14 @@ fn library_buffer_places_multiline_text() {
 }
 
 #[test]
+fn library_buffer_moves_non_whitespace_cells() {
+    let mut buffer = Buffer::from_text("ab\n");
+    buffer.move_box(Point::new(0, 0), Point::new(1, 0), (1, 1));
+    buffer.commit();
+    assert_eq!(buffer.render(""), "  \n ab\n");
+}
+
+#[test]
 fn library_buffer_erases_only_visible_cells_in_a_box() {
     let mut buffer = Buffer::from_text("ab\n c\n");
     buffer.erase_box(Point::new(0, 0), Point::new(0, 1));

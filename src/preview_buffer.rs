@@ -165,6 +165,11 @@ impl PreviewBuffer {
         self.preview_library(|buffer| buffer.place_text(point(origin), lines));
     }
 
+    /// Move non-whitespace committed cells in an inclusive rectangle.
+    pub(crate) fn move_box(&mut self, first: Vec2, second: Vec2, delta: XY<isize>) {
+        self.preview_library(|buffer| buffer.move_box(point(first), point(second), (delta.x, delta.y)));
+    }
+
     /// Erase non-whitespace committed cells in an inclusive rectangle.
     pub(crate) fn erase_box(&mut self, first: Vec2, second: Vec2) {
         self.preview_library(|buffer| buffer.erase_box(point(first), point(second)));
